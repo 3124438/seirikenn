@@ -1,12 +1,13 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 厳しすぎるチェックを無視してビルドを強制する設定
   typescript: {
     ignoreBuildErrors: true,
   },
   eslint: {
     ignoreDuringBuilds: true,
   },
+  // ↓↓↓ ここが今回の修正ポイントです ↓↓↓
+  transpilePackages: ['undici', 'firebase', '@firebase/auth'],
 }
 
 module.exports = nextConfig
