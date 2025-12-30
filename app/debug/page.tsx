@@ -125,15 +125,15 @@ export default function AdminPage() {
       });
   };
 
-  // ★ 新機能: 詳細を開くときのパスワード認証
+  // 詳細を開くときのパスワード認証
   const handleOpenDetails = (shop: any) => {
     const inputPass = prompt(`「${shop.name}」の管理パスワードを入力してください:`);
-    if (inputPass === null) return; // キャンセル
+    if (inputPass === null) return; 
 
     if (inputPass === shop.password) {
       setExpandedShopId(shop.id);
     } else {
-      alert("パスワードが違います！アクセスできません。アホンダラ");
+      alert("パスワードが違います！アクセスできません。");
     }
   };
 
@@ -160,14 +160,38 @@ export default function AdminPage() {
       <div className="mb-6 border-b border-gray-700 pb-4">
         <h1 className="text-2xl font-bold text-yellow-400 mb-4">管理者コンソール</h1>
         
-        <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4">
+        <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
             <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
             <div className="mt-4 pt-4 border-t border-gray-700">
                 <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    <input disabled={isEditing} className="bg-gray-700 p-2 rounded text-white" placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} />
-                    <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
-                    <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
+                    {/* ID入力欄 */}
+                    <input 
+                        disabled={isEditing} 
+                        className={`p-2 rounded text-white ${isEditing ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-700'}`} 
+                        placeholder="ID (例: 3B)" 
+                        maxLength={3} 
+                        value={manualId} 
+                        onChange={e => setManualId(e.target.value)} 
+                    />
+                    
+                    {/* 会場名 */}
+                    <input 
+                        className="bg-gray-700 p-2 rounded text-white" 
+                        placeholder="会場名" 
+                        value={newName} 
+                        onChange={e => setNewName(e.target.value)} 
+                    />
+                    
+                    {/* パスワード入力欄 (ここを変更しました) */}
+                    <input 
+                        disabled={isEditing} 
+                        className={`p-2 rounded text-white ${isEditing ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-700'}`} 
+                        placeholder={isEditing ? "パスワード変更不可" : "パスワード(5桁)"}
+                        maxLength={5} 
+                        value={password} 
+                        onChange={e => setPassword(e.target.value)} 
+                    />
                 </div>
                 <div className="grid grid-cols-4 gap-2 mb-2">
                     <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
@@ -213,7 +237,6 @@ export default function AdminPage() {
                    return (
                       <button 
                         key={shop.id} 
-                        // ★ 変更点: ここで関数を呼び出す
                         onClick={() => handleOpenDetails(shop)}
                         className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                       >
@@ -242,7 +265,7 @@ export default function AdminPage() {
                               <span className="text-yellow-400 font-mono">{targetShop.id}</span>
                               {targetShop.name}
                           </h2>
-                          <p className="text-xs text-gray-400 mt-1">Pass: {targetShop.password} | 定員: {targetShop.capacity}組</p>
+                          <p className="text-xs text-gray-400 mt-1">Pass: **** | 定員: {targetShop.capacity}組</p>
                       </div>
                       <div className="flex gap-2">
                           <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
