@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-// ↓ ここを修正しました (../../ から ../../../ に変更)
+// 階層に合わせてパスを調整 (app/debug/Council/page.tsx)
 import { db, auth } from "../../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -11,6 +11,9 @@ export default function SuperAdminPage() {
   // 表示モード管理
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
   const [isEditing, setIsEditing] = useState(false);
+
+  // ★ 変更前（元）のIDを保持しておくためのステート
+  const [originalId, setOriginalId] = useState<string | null>(null);
 
   // 新規作成・編集用フォーム
   const [manualId, setManualId] = useState("");
@@ -37,6 +40,7 @@ export default function SuperAdminPage() {
   // --- 編集・作成関連 ---
   const resetForm = () => {
     setIsEditing(false);
+    setOriginalId(null); // 元IDリセット
     setManualId(""); setNewName(""); setPassword("");
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
@@ -44,6 +48,7 @@ export default function SuperAdminPage() {
 
   const startEdit = (shop: any) => {
     setIsEditing(true);
+    setOriginalId(shop.id); // ★ 元のIDを記憶
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
@@ -55,16 +60,30 @@ export default function SuperAdminPage() {
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
     if (password.length !== 5) return alert("パスワードは5桁です");
 
+    // ID変更時の重複チェック
+    if (isEditing && originalId !== manualId) {
+        const exists = attractions.some(s => s.id === manualId);
+        if (exists) return alert(`ID「${manualId}」は既に存在するため変更できません。別のIDにしてください。`);
+    }
+
     let slots = {};
     let shouldResetSlots = true;
+    let existingReservations = []; // 予約データを保持用
 
     if (isEditing) {
-        const currentShop = attractions.find(s => s.id === manualId);
-        if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
-            slots = currentShop.slots;
-            shouldResetSlots = false;
-        } else {
-            if(!confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
+        // 元のID（originalId）を使って現在のデータを取得
+        const currentShop = attractions.find(s => s.id === originalId);
+        
+        if (currentShop) {
+            existingReservations = currentShop.reservations || []; // 既存予約をキープ
+            
+            // 時間設定が変わっていないか確認
+            if (currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
+                slots = currentShop.slots;
+                shouldResetSlots = false;
+            } else {
+                if(!confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
+            }
         }
     }
 
@@ -81,19 +100,38 @@ export default function SuperAdminPage() {
 
     const data: any = {
       name: newName, password, groupLimit,
-      openTime, closeTime, duration, capacity, isPaused, slots
+      openTime, closeTime, duration, capacity, isPaused, slots,
+      reservations: existingReservations // ID変更しても予約を引き継ぐ
     };
 
     if (!isEditing) data.reservations = [];
 
-    await setDoc(doc(db, "attractions", manualId), data, { merge: true });
-    
-    alert(isEditing ? "更新しました" : "作成しました");
-    if(isEditing) {
-        setExpandedShopId(manualId);
-        setIsEditing(false);
+    try {
+        if (isEditing && originalId && manualId !== originalId) {
+            // ★ ID変更の場合の処理（重要）
+            if(!confirm(`会場IDを「${originalId}」から「${manualId}」に変更しますか？\n(データは引き継がれます)`)) return;
+
+            // 1. 新しいIDでデータを作成
+            await setDoc(doc(db, "attractions", manualId), data);
+            // 2. 古いIDのデータを削除
+            await deleteDoc(doc(db, "attractions", originalId));
+            
+            alert(`IDを変更して更新しました。\n${originalId} → ${manualId}`);
+            setExpandedShopId(manualId); // 表示中の詳細も新しいIDへ
+
+        } else {
+            // 通常の更新（ID変更なし）または新規作成
+            await setDoc(doc(db, "attractions", manualId), data, { merge: true });
+            alert(isEditing ? "更新しました" : "作成しました");
+            if(isEditing) setExpandedShopId(manualId);
+        }
+        
+        resetForm();
+
+    } catch(e) {
+        console.error(e);
+        alert("エラーが発生しました");
     }
-    resetForm();
   };
 
   const handleDeleteVenue = async (id: string) => {
@@ -152,13 +190,27 @@ export default function SuperAdminPage() {
         <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
             <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
             <div className="mt-4 pt-4 border-t border-gray-700">
-                <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
+                <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${originalId} を編集中` : "新規作成"}</h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    <input disabled={isEditing} className={`p-2 rounded text-white ${isEditing ? 'bg-gray-600 cursor-not-allowed' : 'bg-gray-700'}`} placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} />
+                    {/* ID入力欄: disabled を削除しました */}
+                    <input 
+                        className={`p-2 rounded text-white bg-gray-700 ${isEditing && manualId !== originalId ? 'ring-2 ring-yellow-500' : ''}`}
+                        placeholder="ID (例: 3B)" 
+                        maxLength={3} 
+                        value={manualId} 
+                        onChange={e => setManualId(e.target.value)} 
+                    />
+                    
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
-                    {/* ここは制限なしでパスワード編集可能 */}
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
                 </div>
+                {/* ID変更時の警告メッセージ */}
+                {isEditing && manualId !== originalId && (
+                    <div className="text-xs text-yellow-400 font-bold mb-2">
+                        ⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。
+                    </div>
+                )}
+                
                 <div className="grid grid-cols-4 gap-2 mb-2">
                     <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
                     <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
@@ -198,7 +250,6 @@ export default function SuperAdminPage() {
                    return (
                       <button 
                         key={shop.id} 
-                        // ★ パスワードなしで開く
                         onClick={() => setExpandedShopId(shop.id)}
                         className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                       >
@@ -227,7 +278,6 @@ export default function SuperAdminPage() {
                               <span className="text-yellow-400 font-mono">{targetShop.id}</span>
                               {targetShop.name}
                           </h2>
-                          {/* パスワードをそのまま表示 */}
                           <p className="text-xs text-gray-400 mt-1">Pass: {targetShop.password} | 定員: {targetShop.capacity}組</p>
                       </div>
                       <div className="flex gap-2">
