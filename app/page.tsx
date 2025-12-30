@@ -116,7 +116,6 @@ export default function Home() {
     if (inputPass === shop.password) {
       try {
         // DB上のステータスを「used (入場済)」に変更する処理
-        // (Firestoreの配列内更新は複雑なため、一度削除して追加し直す手法をとります)
         const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time);
         if(oldRes) {
             await updateDoc(doc(db, "attractions", shop.id), {
@@ -212,7 +211,8 @@ export default function Home() {
           </div>
         </div>
       )}
-      <div className="mt-12 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">Admin</a></div>
+      {/* ↓↓ ここが変わりました ↓↓ */}
+      <div className="mt-12 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">/debug</a></div>
     </div>
   );
 }
