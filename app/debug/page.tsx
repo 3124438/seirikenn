@@ -47,7 +47,6 @@ export default function AdminPage() {
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
-    // フォームまでスクロール
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -58,7 +57,6 @@ export default function AdminPage() {
     let slots = {};
     let shouldResetSlots = true;
 
-    // 編集モードで時間が変わっていない場合は予約枠を維持
     if (isEditing) {
         const currentShop = attractions.find(s => s.id === manualId);
         if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
@@ -91,7 +89,7 @@ export default function AdminPage() {
     
     alert(isEditing ? "更新しました" : "作成しました");
     if(isEditing) {
-        setExpandedShopId(manualId); // 編集後はその詳細を表示
+        setExpandedShopId(manualId);
         setIsEditing(false);
     }
     resetForm();
@@ -103,9 +101,7 @@ export default function AdminPage() {
     setExpandedShopId(null);
   };
 
-  // --- 予約操作関連 (個別) ---
-
-  // ステータス変更 (予約中 <-> 入場済)
+  // --- 予約操作関連 ---
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
 
@@ -117,12 +113,10 @@ export default function AdminPage() {
      });
   };
 
-  // 予約キャンセル
   const cancelReservation = async (shop: any, res: any) => {
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
 
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-      // カウントを戻す（入場済みだったとしても、枠を空けるなら戻す）
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
 
       await updateDoc(doc(db, "attractions", shop.id), {
@@ -131,17 +125,26 @@ export default function AdminPage() {
       });
   };
 
+  // ★ 新機能: 詳細を開くときのパスワード認証
+  const handleOpenDetails = (shop: any) => {
+    const inputPass = prompt(`「${shop.name}」の管理パスワードを入力してください:`);
+    if (inputPass === null) return; // キャンセル
+
+    if (inputPass === shop.password) {
+      setExpandedShopId(shop.id);
+    } else {
+      alert("パスワードが違います！アクセスできません。アホンダラ");
+    }
+  };
+
   // --- 表示用ヘルパー ---
   const targetShop = attractions.find(s => s.id === expandedShopId);
 
-  // 時間ごとに予約者をグループ化する関数
   const getReservationsByTime = (shop: any) => {
       const grouped: any = {};
-      // まず枠を作成
       Object.keys(shop.slots || {}).sort().forEach(time => {
           grouped[time] = [];
       });
-      // 予約を入れる
       if(shop.reservations) {
           shop.reservations.forEach((res: any) => {
               if(grouped[res.time]) {
@@ -154,13 +157,11 @@ export default function AdminPage() {
 
   return (
     <div className="max-w-4xl mx-auto p-4 bg-gray-900 min-h-screen text-white pb-32">
-      {/* ヘッダーエリア */}
       <div className="mb-6 border-b border-gray-700 pb-4">
         <h1 className="text-2xl font-bold text-yellow-400 mb-4">管理者コンソール</h1>
         
-        {/* 新規作成フォーム（常時表示または折りたたみ） */}
         <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4">
-            <summary className="cursor-pointer font-bold text-blue-400">新規会場の作成 / 設定フォーム</summary>
+            <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
             <div className="mt-4 pt-4 border-t border-gray-700">
                 <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
@@ -188,7 +189,6 @@ export default function AdminPage() {
             </div>
         </details>
 
-        {/* ユーザーID検索（どこからでも探せるように） */}
         <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600">
             <span className="text-xl">🔍</span>
             <input 
@@ -205,19 +205,16 @@ export default function AdminPage() {
         </div>
       </div>
 
-      {/* --- メインエリア --- */}
-
-      {/* 1. 一覧モード（詳細が開かれていない時） */}
       {!expandedShopId && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {attractions.map(shop => {
-                   // 検索フィルター
                    const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                    
                    return (
                       <button 
                         key={shop.id} 
-                        onClick={() => setExpandedShopId(shop.id)}
+                        // ★ 変更点: ここで関数を呼び出す
+                        onClick={() => handleOpenDetails(shop)}
                         className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                       >
                           <div>
@@ -225,23 +222,20 @@ export default function AdminPage() {
                               <span className="font-bold text-lg">{shop.name}</span>
                               {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
                           </div>
-                          <div className="text-gray-400 text-2xl">›</div>
+                          <div className="text-gray-400 text-2xl">🔐 ›</div>
                       </button>
                    );
               })}
           </div>
       )}
 
-      {/* 2. 詳細モード（会場が選択された時） */}
       {expandedShopId && targetShop && (
           <div className="animate-fade-in">
-              {/* 戻るヘッダー */}
               <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">
                   ← 会場一覧に戻る
               </button>
 
               <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
-                  {/* タイトルバー */}
                   <div className="bg-gray-700 p-4 flex justify-between items-center">
                       <div>
                           <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -256,7 +250,6 @@ export default function AdminPage() {
                       </div>
                   </div>
 
-                  {/* 予約リスト（時間ごと） */}
                   <div className="p-4 space-y-6">
                       {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
                           const slotCount = targetShop.slots[time] || 0;
@@ -264,7 +257,6 @@ export default function AdminPage() {
 
                           return (
                               <div key={time} className={`border rounded-lg p-3 ${isFull ? 'border-red-500/50 bg-red-900/10' : 'border-gray-600 bg-gray-900/50'}`}>
-                                  {/* 時間ヘッダー */}
                                   <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
                                       <h3 className="font-bold text-lg text-blue-300">{time}</h3>
                                       <span className={`text-sm font-bold ${isFull ? 'text-red-400' : 'text-green-400'}`}>
@@ -272,12 +264,10 @@ export default function AdminPage() {
                                       </span>
                                   </div>
 
-                                  {/* 予約者リスト */}
                                   <div className="space-y-2">
                                       {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
                                       
                                       {reservations.map((res: any) => {
-                                          // 検索ハイライト
                                           const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
                                           
                                           return (
@@ -298,7 +288,6 @@ export default function AdminPage() {
                                                               <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
                                                           </>
                                                       ) : (
-                                                          // 入場済みの時の操作
                                                           <>
                                                               <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
                                                           </>
