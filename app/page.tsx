@@ -143,7 +143,7 @@ export default function Home() {
           </div>
         </div>
       )}
-      <div className="mt-12 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">Admin</a></div>
+      <div className="mt-12 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">/debug</a></div>
     </div>
   );
 }
