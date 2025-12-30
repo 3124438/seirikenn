@@ -59,12 +59,12 @@ export default function Home() {
     const shop = attractions.find(s => s.id === ticket.shopId);
     if (!shop) return alert("データが見つかりません");
 
-    const inputPass = prompt(`${ticket.shopName}のスタッフパスワード(5桁)を入力してください：`);
+    const inputPass = prompt(`${ticket.shopName}のパスワード(5桁)を入力してください：`);
     if (inputPass === null) return; // キャンセル時
 
     // パスワード照合
     if (inputPass === shop.password) {
-      alert("認証成功！入場済みとしてチケットを消去します。");
+      alert("認証成功！入場済みとしてチケットを消費します。");
       
       // ★重要: DBのカウントは減らさず、スマホ上のチケットだけ消す
       const updated = myTickets.filter(t => t.timestamp !== ticket.timestamp);
@@ -78,7 +78,7 @@ export default function Home() {
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20">
       <header className="flex justify-between items-center mb-6">
-        <h1 className="text-xl font-bold text-blue-900">文化祭-予約システム</h1>
+        <h1 className="text-xl font-bold text-blue-900">文化祭-予約</h1>
         <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">予約: {myTickets.length}/3</div>
       </header>
 
