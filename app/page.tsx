@@ -78,7 +78,7 @@ export default function Home() {
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20">
       <header className="flex justify-between items-center mb-6">
-        <h1 className="text-xl font-bold text-blue-900">旬 - 予約システム</h1>
+        <h1 className="text-xl font-bold text-blue-900">文化祭-予約システム</h1>
         <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">予約: {myTickets.length}/3</div>
       </header>
 
