@@ -160,7 +160,7 @@ export default function AdminPage() {
         
         {/* 新規作成フォーム（常時表示または折りたたみ） */}
         <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4">
-            <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
+            <summary className="cursor-pointer font-bold text-blue-400">新規会場の作成 / 設定フォーム</summary>
             <div className="mt-4 pt-4 border-t border-gray-700">
                 <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
