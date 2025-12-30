@@ -34,12 +34,12 @@ export default function Home() {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(data);
 
-      // 自分の予約をデータから探し出す（スマホのキャッシュ消去対策）
+      // 自分の予約をデータから探し出す
       const myFoundTickets: Ticket[] = [];
       data.forEach((shop: any) => {
         if (shop.reservations) {
           shop.reservations.forEach((r: any) => {
-            if (r.userId === storedId && r.status === "reserved") {
+            if (r.userId === storedId) {
               myFoundTickets.push({
                 shopId: shop.id,
                 shopName: shop.name,
@@ -59,9 +59,12 @@ export default function Home() {
     return () => unsub();
   }, []);
 
+  const activeTickets = myTickets.filter(t => t.status === "reserved");
+  const usedTickets = myTickets.filter(t => t.status === "used");
+
   const handleBook = async (shop: any, time: string) => {
-    if (myTickets.length >= 3) return alert("予約は3つまでです！");
-    if (myTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("すでに同じ時間を予約済みです！");
+    if (activeTickets.length >= 3) return alert("同時に持てる予約は3つまでです！\n入場すると枠が空きます。");
+    if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("すでに同じ時間を予約済みです！");
     if (shop.slots[time] >= shop.capacity) return alert("満席です。");
     if (shop.isPaused) return alert("現在、受付を停止しています。");
     
@@ -71,7 +74,6 @@ export default function Home() {
       const timestamp = Date.now();
       const reservationData = { userId, time, timestamp, status: "reserved" };
 
-      // DB更新: 人数を増やし、予約リストに自分を追加
       await updateDoc(doc(db, "attractions", shop.id), { 
         [`slots.${time}`]: increment(1),
         reservations: arrayUnion(reservationData)
@@ -81,7 +83,7 @@ export default function Home() {
       alert("予約しました！");
     } catch (e) { 
       console.error(e);
-      alert("エラーが発生しました。もう一度お試しください。"); 
+      alert("エラーが発生しました。"); 
     }
   };
 
@@ -93,7 +95,6 @@ export default function Home() {
       if (!shopSnap.exists()) return;
 
       const shopData = shopSnap.data();
-      // 正確なデータを削除するために検索
       const targetRes = shopData.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.timestamp === ticket.timestamp);
 
       if (targetRes) {
@@ -115,8 +116,7 @@ export default function Home() {
 
     if (inputPass === shop.password) {
       try {
-        // DB上のステータスを「used (入場済)」に変更する処理
-        const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time);
+        const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
         if(oldRes) {
             await updateDoc(doc(db, "attractions", shop.id), {
                 reservations: arrayRemove(oldRes)
@@ -125,7 +125,7 @@ export default function Home() {
                 reservations: arrayUnion({ ...oldRes, status: "used" })
             });
         }
-        alert("認証成功！入場記録を保存しました。");
+        alert("認証成功！入場しました。");
       } catch(e) {
         alert("通信エラーが発生しましたが、入場はOKです。");
       }
@@ -139,28 +139,34 @@ export default function Home() {
       <header className="mb-6">
         <div className="flex justify-between items-center mb-2">
            <h1 className="text-xl font-bold text-blue-900">予約システム</h1>
-           <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-bold">予約: {myTickets.length}/3</div>
+           <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+               予約: {activeTickets.length}/3
+           </div>
         </div>
-        {/* User ID 表示 */}
         <div className="bg-gray-800 text-white text-center py-2 rounded-lg font-mono tracking-widest shadow-md">
             ID: <span className="text-yellow-400 font-bold text-lg">{userId}</span>
         </div>
       </header>
 
-      {/* 予約済みチケットエリア */}
-      {myTickets.length > 0 && (
+      {/* 1. 有効なチケットエリア（一番上） */}
+      {activeTickets.length > 0 && (
         <div className="mb-8 space-y-4">
-          <p className="text-gray-500 text-sm font-bold">あなたのチケット</p>
-          {myTickets.map((t) => (
-            <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow">
+          <p className="text-blue-900 text-sm font-bold flex items-center gap-1">
+             現在の予約チケット
+          </p>
+          {activeTickets.map((t) => (
+            <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow-lg relative overflow-hidden">
               <div className="flex justify-between items-center mb-3">
-                <div><h2 className="font-bold text-lg">{t.shopName}</h2><p className="text-2xl font-bold text-blue-600">{t.time}</p></div>
+                <div>
+                    <h2 className="font-bold text-lg">{t.shopName}</h2>
+                    <p className="text-3xl font-bold text-blue-600 font-mono">{t.time}</p>
+                </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => handleEnter(t)} className="flex-1 bg-blue-600 text-white font-bold py-2 rounded shadow hover:bg-blue-500">
-                  入場する
+                <button onClick={() => handleEnter(t)} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-500 transition">
+                  入場画面へ
                 </button>
-                <button onClick={() => handleCancel(t)} className="px-4 py-2 text-red-500 border border-red-200 rounded text-sm hover:bg-red-50">
+                <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
                   キャンセル
                 </button>
               </div>
@@ -169,9 +175,10 @@ export default function Home() {
         </div>
       )}
 
+      {/* 2. 出し物一覧 / 詳細 (メイン機能) */}
       {!selectedShop ? (
         <div className="space-y-3">
-          <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">出し物一覧</p>
+          <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">新しく予約する</p>
           {attractions.map((shop) => (
             <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-4 rounded-xl shadow-sm border text-left flex justify-between items-center hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
               <div>
@@ -195,7 +202,7 @@ export default function Home() {
           <div className="grid grid-cols-3 gap-3">
             {Object.entries(selectedShop.slots || {}).sort().map(([time, count]: any) => {
               const isFull = count >= selectedShop.capacity;
-              const isBooked = myTickets.some(t => t.shopId === selectedShop.id && t.time === time);
+              const isBooked = activeTickets.some(t => t.shopId === selectedShop.id && t.time === time);
               const remaining = selectedShop.capacity - count;
               
               return (
@@ -211,8 +218,32 @@ export default function Home() {
           </div>
         </div>
       )}
-      {/* ↓↓ ここが変わりました ↓↓ */}
-      <div className="mt-12 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">/debug</a></div>
+
+      {/* 3. 入場済み履歴エリア (一番下に移動) */}
+      {usedTickets.length > 0 && (
+        <div className="mt-12 mb-8">
+            <details className="group">
+                <summary className="text-gray-400 text-xs text-center cursor-pointer list-none flex justify-center items-center gap-2 mb-2 hover:text-gray-600">
+                    入場済みの履歴を見る ({usedTickets.length})
+                </summary>
+                <div className="space-y-2 pl-2 border-l-2 border-gray-200 mt-2">
+                    {usedTickets.map((t) => (
+                        <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
+                            <div>
+                                <h2 className="font-bold text-sm text-gray-600">{t.shopName}</h2>
+                                <p className="text-sm font-bold text-gray-500">{t.time}</p>
+                            </div>
+                            <div className="text-xs font-bold text-white bg-gray-400 px-2 py-1 rounded">
+                                入場済
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </details>
+        </div>
+      )}
+
+      <div className="mt-8 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">/debug</a></div>
     </div>
   );
 }
