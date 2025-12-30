@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, arrayRemove, arrayUnion } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 export default function AdminPage() {
@@ -11,7 +11,7 @@ export default function AdminPage() {
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); // 現在開いている会場ID
   const [isEditing, setIsEditing] = useState(false); // 編集モードか
 
-  // 新規作成・編集用フォーム
+  // 編集用フォーム
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
   const [password, setPassword] = useState("");
@@ -33,7 +33,7 @@ export default function AdminPage() {
     return () => unsub();
   }, []);
 
-  // --- 編集・作成関連 ---
+  // --- 編集関連 ---
   const resetForm = () => {
     setIsEditing(false);
     setManualId(""); setNewName(""); setPassword("");
@@ -47,24 +47,28 @@ export default function AdminPage() {
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
+    // 編集画面へスクロール
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSave = async () => {
-    if (!manualId || !newName || !password) return alert("必須項目を入力してください");
+    // 新規作成は禁止のため、編集中でなければ何もしない
+    if (!isEditing) return;
+
+    if (!newName || !password) return alert("必須項目を入力してください");
+    // パスワード桁数チェックは維持（ただし入力欄がdisabledなので実質変更不可）
     if (password.length !== 5) return alert("パスワードは5桁です");
 
     let slots = {};
     let shouldResetSlots = true;
 
-    if (isEditing) {
-        const currentShop = attractions.find(s => s.id === manualId);
-        if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
-            slots = currentShop.slots;
-            shouldResetSlots = false;
-        } else {
-            if(!confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
-        }
+    // 時間変更のチェック
+    const currentShop = attractions.find(s => s.id === manualId);
+    if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
+        slots = currentShop.slots;
+        shouldResetSlots = false;
+    } else {
+        if(!confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
     }
 
     if (shouldResetSlots) {
@@ -79,19 +83,19 @@ export default function AdminPage() {
     }
 
     const data: any = {
-      name: newName, password, groupLimit,
+      name: newName, 
+      // passwordは変更不可だが、念のため現在の値を送信
+      password, 
+      groupLimit,
       openTime, closeTime, duration, capacity, isPaused, slots
     };
 
-    if (!isEditing) data.reservations = [];
-
+    // 既存データの更新のみ
     await setDoc(doc(db, "attractions", manualId), data, { merge: true });
     
-    alert(isEditing ? "更新しました" : "作成しました");
-    if(isEditing) {
-        setExpandedShopId(manualId);
-        setIsEditing(false);
-    }
+    alert("設定を更新しました");
+    setExpandedShopId(manualId);
+    setIsEditing(false);
     resetForm();
   };
 
@@ -125,7 +129,7 @@ export default function AdminPage() {
       });
   };
 
-  // 詳細を開くときのパスワード認証
+  // パスワード認証
   const handleOpenDetails = (shop: any) => {
     const inputPass = prompt(`「${shop.name}」の管理パスワードを入力してください:`);
     if (inputPass === null) return; 
@@ -160,44 +164,36 @@ export default function AdminPage() {
       <div className="mb-6 border-b border-gray-700 pb-4">
         <h1 className="text-2xl font-bold text-yellow-400 mb-4">管理者コンソール</h1>
         
-        <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
-            <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
-            <div className="mt-4 pt-4 border-t border-gray-700">
-                <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
+        {/* ★ 変更点: isEditingがtrueの時だけフォームを表示 */}
+        {isEditing && (
+            <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in">
+                <h3 className="text-sm font-bold mb-3 text-blue-400 border-b border-gray-700 pb-2">
+                    ✏️ 設定を編集: {manualId}
+                </h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    {/* ID入力欄 */}
+                    {/* IDとパスワードは変更不可 */}
                     <input 
-                        disabled={isEditing} 
-                        className={`p-2 rounded text-white ${isEditing ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-700'}`} 
-                        placeholder="ID (例: 3B)" 
-                        maxLength={3} 
+                        disabled 
+                        className="bg-gray-600 text-gray-400 p-2 rounded cursor-not-allowed" 
                         value={manualId} 
-                        onChange={e => setManualId(e.target.value)} 
                     />
-                    
-                    {/* 会場名 */}
                     <input 
                         className="bg-gray-700 p-2 rounded text-white" 
                         placeholder="会場名" 
                         value={newName} 
                         onChange={e => setNewName(e.target.value)} 
                     />
-                    
-                    {/* パスワード入力欄 (ここを変更しました) */}
                     <input 
-                        disabled={isEditing} 
-                        className={`p-2 rounded text-white ${isEditing ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-700'}`} 
-                        placeholder={isEditing ? "パスワード変更不可" : "パスワード(5桁)"}
-                        maxLength={5} 
+                        disabled 
+                        className="bg-gray-600 text-gray-400 p-2 rounded cursor-not-allowed" 
                         value={password} 
-                        onChange={e => setPassword(e.target.value)} 
                     />
                 </div>
                 <div className="grid grid-cols-4 gap-2 mb-2">
-                    <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                    <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                    <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="分"/>
-                    <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="定員"/>
+                    <div><label className="text-xs text-gray-400">開始</label><input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
+                    <div><label className="text-xs text-gray-400">終了</label><input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
+                    <div><label className="text-xs text-gray-400">間隔(分)</label><input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
+                    <div><label className="text-xs text-gray-400">定員(組)</label><input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
                 </div>
                 <div className="flex items-center gap-3 mb-3">
                      <label className="text-xs text-gray-400">1組人数:</label>
@@ -207,11 +203,11 @@ export default function AdminPage() {
                      </label>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">{isEditing ? "変更を保存" : "会場を作成"}</button>
-                    {isEditing && <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>}
+                    <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">変更を保存</button>
+                    <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>
                 </div>
             </div>
-        </details>
+        )}
 
         <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600">
             <span className="text-xl">🔍</span>
@@ -268,7 +264,10 @@ export default function AdminPage() {
                           <p className="text-xs text-gray-400 mt-1">Pass: **** | 定員: {targetShop.capacity}組</p>
                       </div>
                       <div className="flex gap-2">
+                          {/* 編集ボタン */}
                           <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
+                          
+                          {/* 削除ボタンは生徒には不要な場合が多いですが、今回は残してあります。不要なら削除してください */}
                           <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500">会場削除</button>
                       </div>
                   </div>
