@@ -1,266 +1,191 @@
 "use client";
 import { useState, useEffect } from "react";
-import { db, auth } from "../firebase"; 
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc } from "firebase/firestore";
+import { db, auth } from "../../firebase"; 
+import { doc, getDoc, updateDoc, onSnapshot, arrayUnion, arrayRemove } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-type Ticket = { 
-  shopId: string; 
-  shopName: string; 
-  time: string; 
-  timestamp: number; 
-  status: "reserved" | "used"; 
-};
+export default function AdminPage() {
+  const [shopId, setShopId] = useState("");
+  const [password, setPassword] = useState("");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [shopData, setShopData] = useState<any>(null);
+  
+  // 予約BAN（客としての利用禁止）用
+  const [banInput, setBanInput] = useState("");
 
-export default function Home() {
-  const [attractions, setAttractions] = useState<any[]>([]);
-  const [myTickets, setMyTickets] = useState<Ticket[]>([]);
-  const [selectedShop, setSelectedShop] = useState<any | null>(null);
-  const [userId, setUserId] = useState("");
+  // 自分のID（権限チェック用）
+  const [myUserId, setMyUserId] = useState("");
 
   useEffect(() => {
-    signInAnonymously(auth).catch((e) => console.error(e));
-    
-    // 1. ユーザーIDの生成・取得
-    let storedId = localStorage.getItem("bunkasai_user_id");
-    if (!storedId) {
-      storedId = Math.random().toString(36).substring(2, 8).toUpperCase();
-      localStorage.setItem("bunkasai_user_id", storedId);
-    }
-    setUserId(storedId);
-
-    // 2. BANチェック (blacklistの監視)
-    const unsubBan = onSnapshot(doc(db, "system", "blacklist"), (docSnap) => {
-      if (docSnap.exists()) {
-        const bannedList = docSnap.data().ids || [];
-        // もし自分のIDがブラックリストに入っていたら
-        if (bannedList.includes(storedId)) { 
-           alert("あなたのアカウントは管理者により利用停止されています。\n実行委員本部までお問い合わせください。");
-           // 画面を強制的に書き換えて操作不能にする
-           document.body.innerHTML = "<div style='color:red; text-align:center; margin-top:50px; font-weight:bold; font-family:sans-serif;'>ACCESS DENIED<br>利用停止処分中です</div>";
-        }
-      }
-    });
-
-    // 3. データのリアルタイム取得 (attractionsの監視)
-    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAttractions(data);
-
-      // 自分の予約をデータから探し出す
-      const myFoundTickets: Ticket[] = [];
-      data.forEach((shop: any) => {
-        if (shop.reservations) {
-          shop.reservations.forEach((r: any) => {
-            if (r.userId === storedId) {
-              myFoundTickets.push({
-                shopId: shop.id,
-                shopName: shop.name,
-                time: r.time,
-                timestamp: r.timestamp,
-                status: r.status
-              });
-            }
-          });
-        }
-      });
-      // 新しい順に並び替え
-      myFoundTickets.sort((a, b) => b.timestamp - a.timestamp);
-      setMyTickets(myFoundTickets);
-    });
-
-    // クリーンアップ関数: 画面を閉じる時に監視を解除する
-    return () => {
-        unsubBan();
-        unsubAttractions();
-    };
+    signInAnonymously(auth).catch(console.error);
+    // 一般画面と同じIDを取得して、自分がスタッフかBAN対象かを判定する
+    const stored = localStorage.getItem("bunkasai_user_id");
+    if (stored) setMyUserId(stored);
   }, []);
 
-  const activeTickets = myTickets.filter(t => t.status === "reserved");
-  const usedTickets = myTickets.filter(t => t.status === "used");
-
-  const handleBook = async (shop: any, time: string) => {
-    if (activeTickets.length >= 3) return alert("同時に持てる予約は3つまでです！\n入場又はキャンセルすると枠が空きます。");
-    if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("すでに同じ時間を予約済みです！");
-    if (shop.slots[time] >= shop.capacity) return alert("満席です。");
-    if (shop.isPaused) return alert("現在、受付を停止しています。");
-    
-    if (!confirm(`${shop.name} ${time}〜\n予約しますか？`)) return;
-
+  // ログイン処理
+  const handleLogin = async () => {
     try {
-      const timestamp = Date.now();
-      const reservationData = { userId, time, timestamp, status: "reserved" };
-
-      await updateDoc(doc(db, "attractions", shop.id), { 
-        [`slots.${time}`]: increment(1),
-        reservations: arrayUnion(reservationData)
-      });
+      const docRef = doc(db, "attractions", shopId);
+      const snap = await getDoc(docRef);
       
-      setSelectedShop(null);
-      alert("予約しました！");
-    } catch (e) { 
+      if (!snap.exists()) {
+        alert("店舗IDが見つかりません");
+        return;
+      }
+
+      const data = snap.data();
+
+      // 1. 編集権限剥奪チェック (Admin Ban)
+      if (data.adminBannedUsers && data.adminBannedUsers.includes(myUserId)) {
+        alert("あなたの端末からのアクセスはこの店舗の管理者により禁止されています。(Access Denied)");
+        return;
+      }
+
+      // 2. 編集権限付与チェック (Admin Allow) -> パスワード無視でOK
+      if (data.adminAllowedUsers && data.adminAllowedUsers.includes(myUserId)) {
+        alert(`スタッフ認証: ID ${myUserId} は許可されています。`);
+        setIsLoggedIn(true);
+        return;
+      }
+
+      // 3. 通常のパスワードチェック
+      if (data.password === password) {
+        setIsLoggedIn(true);
+      } else {
+        alert("パスワードが違います");
+      }
+
+    } catch (e) {
+      alert("エラーが発生しました");
       console.error(e);
-      alert("エラーが発生しました。"); 
     }
   };
 
-  const handleCancel = async (ticket: Ticket) => {
-    if (!confirm("キャンセルしますか？")) return;
+  useEffect(() => {
+    if (!isLoggedIn || !shopId) return;
+    const unsub = onSnapshot(doc(db, "attractions", shopId), (doc) => {
+      const data = doc.data();
+      setShopData(data);
+
+      // ログイン中にBANされた場合、強制ログアウトさせる
+      if (data?.adminBannedUsers?.includes(myUserId)) {
+          alert("管理者権限が剥奪されました。");
+          setIsLoggedIn(false);
+          setShopData(null);
+      }
+    });
+    return () => unsub();
+  }, [isLoggedIn, shopId, myUserId]);
+
+  const togglePause = async () => {
+    if (!shopData) return;
+    const newState = !shopData.isPaused;
+    if (confirm(newState ? "新規受付を停止しますか？" : "受付を再開しますか？")) {
+        await updateDoc(doc(db, "attractions", shopId), { isPaused: newState });
+    }
+  };
+
+  // 予約BAN（客BAN）の追加
+  const handleAddBan = async () => {
+    if(!banInput) return;
+    if(!confirm(`ID: ${banInput} をこの店舗で予約不可(BAN)にしますか？`)) return;
     try {
-      const shopRef = doc(db, "attractions", ticket.shopId);
-      const shopSnap = await getDoc(shopRef);
-      if (!shopSnap.exists()) return;
-
-      const shopData = shopSnap.data();
-      const targetRes = shopData.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.timestamp === ticket.timestamp);
-
-      if (targetRes) {
-        await updateDoc(shopRef, { 
-          [`slots.${ticket.time}`]: increment(-1),
-          reservations: arrayRemove(targetRes)
+        await updateDoc(doc(db, "attractions", shopId), {
+            bannedUsers: arrayUnion(banInput)
         });
-        alert("キャンセルしました");
-      }
-    } catch (e) { alert("キャンセル失敗"); }
+        setBanInput("");
+        alert("BANリストに追加しました");
+    } catch(e) { alert("エラー"); }
   };
 
-  const handleEnter = async (ticket: Ticket) => {
-    const shop = attractions.find(s => s.id === ticket.shopId);
-    if (!shop) return alert("データが見つかりません");
-
-    const inputPass = prompt(`${ticket.shopName}のスタッフパスワード(5桁)を入力：`);
-    if (inputPass === null) return;
-
-    if (inputPass === shop.password) {
-      try {
-        const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
-        if(oldRes) {
-            await updateDoc(doc(db, "attractions", shop.id), {
-                reservations: arrayRemove(oldRes)
-            });
-            await updateDoc(doc(db, "attractions", shop.id), {
-                reservations: arrayUnion({ ...oldRes, status: "used" })
-            });
-        }
-        alert("認証成功！入場しました。");
-      } catch(e) {
-        alert("通信エラーが発生しましたが、入場はOKです。");
-      }
-    } else {
-      alert("パスワードが違います！");
-    }
+  // 予約BAN（客BAN）の解除
+  const handleRemoveBan = async (id: string) => {
+    if(!confirm(`ID: ${id} のBANを解除しますか？`)) return;
+    try {
+        await updateDoc(doc(db, "attractions", shopId), {
+            bannedUsers: arrayRemove(id)
+        });
+        alert("解除しました");
+    } catch(e) { alert("エラー"); }
   };
+
+  if (!isLoggedIn) {
+    return (
+      <div className="p-8 max-w-sm mx-auto min-h-screen flex flex-col justify-center">
+        <h1 className="text-2xl font-bold mb-4 text-gray-800">店舗管理ログイン</h1>
+        <p className="text-xs text-gray-400 mb-4">Your ID: {myUserId}</p>
+        
+        <input className="border p-3 w-full mb-3 rounded" placeholder="店舗ID (例: shop1)" value={shopId} onChange={(e) => setShopId(e.target.value)} />
+        <input className="border p-3 w-full mb-6 rounded" type="password" placeholder="管理パスワード" value={password} onChange={(e) => setPassword(e.target.value)} />
+        
+        <button className="bg-blue-600 text-white font-bold py-3 w-full rounded shadow hover:bg-blue-500 transition" onClick={handleLogin}>
+            ログイン
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20">
-      <header className="mb-6">
-        <div className="flex justify-between items-center mb-2">
-           <h1 className="text-xl font-bold text-blue-900">予約システム</h1>
-           <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-               予約: {activeTickets.length}/3
-           </div>
+    <div className="p-4 max-w-md mx-auto min-h-screen bg-gray-50 pb-20">
+      <div className="flex justify-between items-center mb-4">
+          <h1 className="text-xl font-bold text-gray-800">{shopData?.name} 管理</h1>
+          <button onClick={() => setIsLoggedIn(false)} className="text-xs text-gray-500 underline">ログアウト</button>
+      </div>
+      
+      {/* 受付停止ボタン */}
+      <div className="mb-6 p-4 bg-white rounded shadow text-center">
+         <p className="mb-2 text-sm text-gray-500">混雑時などに一時的に予約を止められます</p>
+         <button onClick={togglePause} className={`w-full py-3 font-bold rounded text-white shadow transition ${shopData?.isPaused ? "bg-red-500 hover:bg-red-400" : "bg-blue-500 hover:bg-blue-400"}`}>
+             {shopData?.isPaused ? "⛔ 現在停止中 (再開する)" : "✅ 現在受付中 (停止する)"}
+         </button>
+      </div>
+      
+      {/* 予約状況概要 */}
+      <div className="bg-white p-4 rounded shadow mb-6">
+        <h2 className="font-bold border-b pb-2 mb-2 text-gray-700">現在の予約状況</h2>
+        <div className="grid grid-cols-2 gap-2 text-sm">
+             <div>予約総数: <span className="font-bold">{shopData?.reservations?.length || 0}</span>件</div>
+             {/* 簡易表示のみ。詳細はHack画面へ誘導 */}
         </div>
-        <div className="bg-gray-800 text-white text-center py-2 rounded-lg font-mono tracking-widest shadow-md">
-            ID: <span className="text-yellow-400 font-bold text-lg">{userId}</span>
-        </div>
-      </header>
+        <p className="text-xs text-gray-400 mt-2">※詳細な予約操作や強制削除は本部へ依頼してください</p>
+      </div>
 
-      {/* 1. 有効なチケットエリア（一番上） */}
-      {activeTickets.length > 0 && (
-        <div className="mb-8 space-y-4">
-          <p className="text-blue-900 text-sm font-bold flex items-center gap-1">
-             🎟️ 現在の予約チケット
-          </p>
-          {activeTickets.map((t) => (
-            <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow-lg relative overflow-hidden">
-              <div className="flex justify-between items-center mb-3">
-                <div>
-                    <h2 className="font-bold text-lg">{t.shopName}</h2>
-                    <p className="text-3xl font-bold text-blue-600 font-mono">{t.time}</p>
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => handleEnter(t)} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-500 transition">
-                  入場画面へ
-                </button>
-                <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
-                  キャンセル
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* 2. 出し物一覧 / 詳細 (メイン機能) */}
-      {!selectedShop ? (
-        <div className="space-y-3">
-          <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">新しく予約する</p>
-          {attractions.map((shop) => (
-            <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-4 rounded-xl shadow-sm border text-left flex justify-between items-center hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
-              <div>
-                  <span className="font-bold text-lg flex items-center gap-2">
-                      {shop.name}
-                      {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
-                  </span>
-                  <div className="text-xs text-gray-400">{shop.openTime}-{shop.closeTime} (各{shop.groupLimit}名まで)</div>
-              </div>
-              <span className="bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono text-xs">詳細 &gt;</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div>
-          <button onClick={() => setSelectedShop(null)} className="mb-4 text-sm text-gray-500 flex items-center gap-1">← もどる</button>
-          <h2 className="text-2xl font-bold mb-1">{selectedShop.name}</h2>
-          <p className="text-gray-500 mb-2 text-sm">定員: {selectedShop.groupLimit}名 / 組</p>
-          {selectedShop.isPaused && <p className="text-red-500 font-bold mb-4 bg-red-100 p-2 rounded text-center">現在、新規の受付を停止しています</p>}
+      {/* 迷惑客BAN管理 (Requirement 3) */}
+      <div className="bg-white p-4 rounded shadow border-t-4 border-red-500">
+          <h2 className="font-bold text-red-600 mb-1">迷惑ユーザー対策</h2>
+          <p className="text-xs text-gray-500 mb-3">指定したIDはこの出し物を予約できなくなります。(予約BAN)</p>
           
-          <div className="grid grid-cols-3 gap-3">
-            {Object.entries(selectedShop.slots || {}).sort().map(([time, count]: any) => {
-              const isFull = count >= selectedShop.capacity;
-              const isBooked = activeTickets.some(t => t.shopId === selectedShop.id && t.time === time);
-              const remaining = selectedShop.capacity - count;
-              
-              return (
-                <button key={time} disabled={isFull || isBooked || selectedShop.isPaused} onClick={() => handleBook(selectedShop, time)}
-                  className={`p-2 rounded border h-24 flex flex-col items-center justify-center transition ${isFull || selectedShop.isPaused ? "bg-gray-100 text-gray-300" : isBooked ? "bg-green-50 border-green-500 text-green-700" : "bg-white border-blue-200 text-blue-900 shadow-sm"}`}>
-                  <span className="text-xl font-bold mb-1">{time}</span>
-                  <span className="text-xs font-bold">
-                    {isBooked ? "予約済" : isFull ? "満席" : `あと${remaining}組`}
-                  </span>
-                </button>
-              );
-            })}
+          <div className="flex gap-2 mb-4">
+              <input 
+                 className="border p-2 flex-1 rounded text-sm bg-gray-50" 
+                 placeholder="ユーザーIDを入力" 
+                 value={banInput}
+                 onChange={e => setBanInput(e.target.value)}
+              />
+              <button onClick={handleAddBan} className="bg-red-600 hover:bg-red-500 text-white px-4 rounded text-sm font-bold">禁止</button>
           </div>
-        </div>
-      )}
+          
+          {shopData?.bannedUsers?.length > 0 && (
+              <div className="bg-red-50 p-2 rounded border border-red-100">
+                  <p className="text-xs font-bold text-red-800 mb-1">⛔ 予約禁止リスト:</p>
+                  <ul>
+                      {shopData.bannedUsers.map((uid:string) => (
+                          <li key={uid} className="flex justify-between items-center text-sm border-b border-red-200 py-1 last:border-0">
+                              <span className="font-mono text-gray-700">{uid}</span>
+                              <button onClick={() => handleRemoveBan(uid)} className="text-blue-500 text-xs hover:underline">解除</button>
+                          </li>
+                      ))}
+                  </ul>
+              </div>
+          )}
+      </div>
 
-      {/* 3. 入場済み履歴エリア (一番下に移動済み) */}
-      {usedTickets.length > 0 && (
-        <div className="mt-12 mb-8">
-            <details className="group">
-                <summary className="text-gray-400 text-xs text-center cursor-pointer list-none flex justify-center items-center gap-2 mb-2 hover:text-gray-600">
-                    📂 入場済みの履歴を見る ({usedTickets.length})
-                </summary>
-                <div className="space-y-2 pl-2 border-l-2 border-gray-200 mt-2">
-                    {usedTickets.map((t) => (
-                        <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
-                            <div>
-                                <h2 className="font-bold text-sm text-gray-600">{t.shopName}</h2>
-                                <p className="text-sm font-bold text-gray-500">{t.time}</p>
-                            </div>
-                            <div className="text-xs font-bold text-white bg-gray-400 px-2 py-1 rounded">
-                                入場済
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </details>
-        </div>
-      )}
-
-      <div className="mt-8 text-center border-t pt-4"><a href="/seisakusyanikannsyao" className="text-xs text-gray-300">/debug</a></div>
+      {/* スタッフ権限情報（確認用） */}
+      <div className="mt-6 text-xs text-gray-400 text-center">
+          <p>Logged in as: {myUserId}</p>
+          {shopData?.adminAllowedUsers?.includes(myUserId) && <span className="text-green-500 font-bold">★ Authorized Staff</span>}
+      </div>
     </div>
   );
 }
