@@ -31,9 +31,23 @@ export default function AdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
     
-    // 自分のIDを取得
-    const stored = localStorage.getItem("bunkasai_user_id");
-    if (stored) setMyUserId(stored);
+    // --- ★ここを修正: IDの取得と生成ロジック ---
+    let stored = localStorage.getItem("bunkasai_user_id");
+    
+    // もしローカルストレージにIDがなければ、ここで生成して保存する
+    // (予約画面と同じキー 'bunkasai_user_id' を使用することで同期されます)
+    if (!stored) {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let result = "";
+        for (let i = 0; i < 6; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        stored = result;
+        localStorage.setItem("bunkasai_user_id", stored);
+    }
+    
+    setMyUserId(stored);
+    // ------------------------------------------
 
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -98,7 +112,7 @@ export default function AdminPage() {
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
     if (password.length !== 5) return alert("パスワードは5桁です");
 
-    let slots = {};
+    let slots: any = {};
     let shouldResetSlots = true;
 
     // 編集モードで時間が変わっていない場合は予約枠を維持
@@ -203,7 +217,7 @@ export default function AdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         {/* ヘッダーエリア */}
         <div className="mb-6 border-b border-gray-700 pb-4">
-            <h1 className="text-2xl font-bold text-white mb-4">全店舗統合管理</h1>
+            <h1 className="text-2xl font-bold text-white mb-4">生徒用管理画面</h1>
             
             {/* ★変更点: 編集時のみフォームを表示、新規作成機能は非表示にする */}
             {isEditing ? (
