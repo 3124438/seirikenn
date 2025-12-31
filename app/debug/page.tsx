@@ -1,331 +1,142 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 export default function AdminPage() {
-  const [attractions, setAttractions] = useState<any[]>([]);
-  
-  // 表示モード管理
-  const [expandedShopId, setExpandedShopId] = useState<string | null>(null); // 現在開いている会場ID
-  const [isEditing, setIsEditing] = useState(false); // 編集モードか
-
-  // 編集用フォーム
-  const [manualId, setManualId] = useState("");
-  const [newName, setNewName] = useState("");
+  const [shopId, setShopId] = useState("");
   const [password, setPassword] = useState("");
-  const [groupLimit, setGroupLimit] = useState(4);
-  const [openTime, setOpenTime] = useState("10:00");
-  const [closeTime, setCloseTime] = useState("15:00");
-  const [duration, setDuration] = useState(20);
-  const [capacity, setCapacity] = useState(3);
-  const [isPaused, setIsPaused] = useState(false);
-
-  // 検索用
-  const [searchUserId, setSearchUserId] = useState("");
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [shopData, setShopData] = useState<any>(null);
+  
+  // 自分のID（権限チェック用）
+  const [myUserId, setMyUserId] = useState("");
 
   useEffect(() => {
-    signInAnonymously(auth).catch((e) => console.error(e));
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
-      setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-    return () => unsub();
+    signInAnonymously(auth).catch(console.error);
+    const stored = localStorage.getItem("bunkasai_user_id");
+    if (stored) setMyUserId(stored);
   }, []);
 
-  // --- 編集関連 ---
-  const resetForm = () => {
-    setIsEditing(false);
-    setManualId(""); setNewName(""); setPassword("");
-    setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
-    setDuration(20); setCapacity(3); setIsPaused(false);
-  };
-
-  const startEdit = (shop: any) => {
-    setIsEditing(true);
-    setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
-    setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
-    setCloseTime(shop.closeTime); setDuration(shop.duration);
-    setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
-    // 編集画面へスクロール
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSave = async () => {
-    // 新規作成は禁止のため、編集中でなければ何もしない
-    if (!isEditing) return;
-
-    if (!newName || !password) return alert("必須項目を入力してください");
-    // パスワード桁数チェックは維持（ただし入力欄がdisabledなので実質変更不可）
-    if (password.length !== 5) return alert("パスワードは5桁です");
-
-    let slots = {};
-    let shouldResetSlots = true;
-
-    // 時間変更のチェック
-    const currentShop = attractions.find(s => s.id === manualId);
-    if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
-        slots = currentShop.slots;
-        shouldResetSlots = false;
-    } else {
-        if(!confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
-    }
-
-    if (shouldResetSlots) {
-        let current = new Date(`2000/01/01 ${openTime}`);
-        const end = new Date(`2000/01/01 ${closeTime}`);
-        slots = {};
-        while (current < end) {
-            const timeStr = current.toTimeString().substring(0, 5);
-            slots = { ...slots, [timeStr]: 0 };
-            current.setMinutes(current.getMinutes() + duration);
-        }
-    }
-
-    const data: any = {
-      name: newName, 
-      // passwordは変更不可だが、念のため現在の値を送信
-      password, 
-      groupLimit,
-      openTime, closeTime, duration, capacity, isPaused, slots
-    };
-
-    // 既存データの更新のみ
-    await setDoc(doc(db, "attractions", manualId), data, { merge: true });
-    
-    alert("設定を更新しました");
-    setExpandedShopId(manualId);
-    setIsEditing(false);
-    resetForm();
-  };
-
-  const handleDeleteVenue = async (id: string) => {
-    if (!confirm("本当に会場を削除しますか？")) return;
-    await deleteDoc(doc(db, "attractions", id));
-    setExpandedShopId(null);
-  };
-
-  // --- 予約操作関連 ---
-  const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
-     if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
-
-     const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-     const updatedRes = { ...res, status: newStatus };
-
-     await updateDoc(doc(db, "attractions", shop.id), {
-         reservations: [...otherRes, updatedRes]
-     });
-  };
-
-  const cancelReservation = async (shop: any, res: any) => {
-      if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
-
-      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-      const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
-
-      await updateDoc(doc(db, "attractions", shop.id), {
-          reservations: otherRes,
-          slots: updatedSlots
-      });
-  };
-
-  // パスワード認証
-  const handleOpenDetails = (shop: any) => {
-    const inputPass = prompt(`「${shop.name}」の管理パスワードを入力してください:`);
-    if (inputPass === null) return; 
-
-    if (inputPass === shop.password) {
-      setExpandedShopId(shop.id);
-    } else {
-      alert("パスワードが違います！アクセスできません。");
-    }
-  };
-
-  // --- 表示用ヘルパー ---
-  const targetShop = attractions.find(s => s.id === expandedShopId);
-
-  const getReservationsByTime = (shop: any) => {
-      const grouped: any = {};
-      Object.keys(shop.slots || {}).sort().forEach(time => {
-          grouped[time] = [];
-      });
-      if(shop.reservations) {
-          shop.reservations.forEach((res: any) => {
-              if(grouped[res.time]) {
-                  grouped[res.time].push(res);
-              }
-          });
+  const handleLogin = async () => {
+    try {
+      if (!shopId) return alert("店舗IDを入力してください");
+      
+      const docRef = doc(db, "attractions", shopId);
+      const snap = await getDoc(docRef);
+      
+      if (!snap.exists()) {
+        alert("店舗IDが見つかりません");
+        return;
       }
-      return grouped;
+
+      const data = snap.data();
+
+      // 1. 【絶対拒否】編集権限剥奪リストに入っているか？
+      if (data.adminBannedUsers && data.adminBannedUsers.includes(myUserId)) {
+        alert("あなたのIDからのアクセスは管理者により禁止されています。(Access Denied)");
+        return;
+      }
+
+      // 2. 【制限モード確認】ホワイトリスト必須モードか？
+      if (data.isAdminRestricted) {
+        if (!data.adminAllowedUsers || !data.adminAllowedUsers.includes(myUserId)) {
+          alert("🔒 現在、この管理画面は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに登録されていません。");
+          return;
+        }
+      }
+
+      // 3. 【パスワード認証】
+      if (data.password === password) {
+        setIsLoggedIn(true);
+      } else {
+        alert("パスワードが違います");
+      }
+
+    } catch (e) {
+      alert("ログインエラー");
+      console.error(e);
+    }
   };
 
-  return (
-    <div className="max-w-4xl mx-auto p-4 bg-gray-900 min-h-screen text-white pb-32">
-      <div className="mb-6 border-b border-gray-700 pb-4">
-        <h1 className="text-2xl font-bold text-yellow-400 mb-4">管理者コンソール</h1>
-        
-        {/* ★ 変更点: isEditingがtrueの時だけフォームを表示 */}
-        {isEditing && (
-            <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in">
-                <h3 className="text-sm font-bold mb-3 text-blue-400 border-b border-gray-700 pb-2">
-                    ✏️ 設定を編集: {manualId}
-                </h3>
-                <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    {/* IDとパスワードは変更不可 */}
-                    <input 
-                        disabled 
-                        className="bg-gray-600 text-gray-400 p-2 rounded cursor-not-allowed" 
-                        value={manualId} 
-                    />
-                    <input 
-                        className="bg-gray-700 p-2 rounded text-white" 
-                        placeholder="会場名" 
-                        value={newName} 
-                        onChange={e => setNewName(e.target.value)} 
-                    />
-                    <input 
-                        disabled 
-                        className="bg-gray-600 text-gray-400 p-2 rounded cursor-not-allowed" 
-                        value={password} 
-                    />
-                </div>
-                <div className="grid grid-cols-4 gap-2 mb-2">
-                    <div><label className="text-xs text-gray-400">開始</label><input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
-                    <div><label className="text-xs text-gray-400">終了</label><input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
-                    <div><label className="text-xs text-gray-400">間隔(分)</label><input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
-                    <div><label className="text-xs text-gray-400">定員(組)</label><input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="w-full bg-gray-700 p-1 rounded text-sm"/></div>
-                </div>
-                <div className="flex items-center gap-3 mb-3">
-                     <label className="text-xs text-gray-400">1組人数:</label>
-                     <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
-                     <label className="text-xs text-gray-400 flex items-center gap-1">
-                        <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} /> 受付停止
-                     </label>
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">変更を保存</button>
-                    <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>
-                </div>
-            </div>
-        )}
+  useEffect(() => {
+    if (!isLoggedIn || !shopId) return;
+    const unsub = onSnapshot(doc(db, "attractions", shopId), (doc) => {
+      const data = doc.data();
+      setShopData(data);
 
-        <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600">
-            <span className="text-xl">🔍</span>
-            <input 
-                className="flex-1 bg-transparent text-white outline-none" 
-                placeholder="ユーザーIDを入力して検索 (例: X9A2...)" 
-                value={searchUserId} 
-                onChange={e => setSearchUserId(e.target.value)} 
-            />
-            {searchUserId && (
-                <div className="text-xs text-pink-400 font-bold animate-pulse">
-                    ※下の一覧から該当ユーザーを探してください
-                </div>
-            )}
+      // ログイン中に権限が変わった場合の強制ログアウト処理
+      if (data) {
+          // BANされた
+          if (data.adminBannedUsers?.includes(myUserId)) {
+              alert("権限が剥奪されました。");
+              setIsLoggedIn(false);
+          }
+          // 制限モードがONになり、かつ自分が許可リストにいない
+          if (data.isAdminRestricted && (!data.adminAllowedUsers || !data.adminAllowedUsers.includes(myUserId))) {
+              alert("管理者により「指名スタッフ限定モード」に切り替えられました。\n権限がないためログアウトします。");
+              setIsLoggedIn(false);
+          }
+      }
+    });
+    return () => unsub();
+  }, [isLoggedIn, shopId, myUserId]);
+
+  const togglePause = async () => {
+    if (!shopData) return;
+    const newState = !shopData.isPaused;
+    if (confirm(newState ? "新規受付を停止しますか？" : "受付を再開しますか？")) {
+        await updateDoc(doc(db, "attractions", shopId), { isPaused: newState });
+    }
+  };
+
+  if (!isLoggedIn) {
+    return (
+      <div className="p-8 max-w-sm mx-auto min-h-screen flex flex-col justify-center">
+        <h1 className="text-2xl font-bold mb-4 text-gray-800">店舗管理ログイン</h1>
+        <p className="text-xs text-gray-400 mb-4">Your ID: {myUserId}</p>
+        
+        <div className="space-y-4">
+            <input className="border p-3 w-full rounded" placeholder="店舗ID" value={shopId} onChange={(e) => setShopId(e.target.value)} />
+            <input className="border p-3 w-full rounded" type="password" placeholder="パスワード" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <button className="bg-blue-600 text-white font-bold py-3 w-full rounded shadow hover:bg-blue-500 transition" onClick={handleLogin}>
+                ログイン
+            </button>
         </div>
       </div>
+    );
+  }
 
-      {!expandedShopId && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {attractions.map(shop => {
-                   const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
-                   
-                   return (
-                      <button 
-                        key={shop.id} 
-                        onClick={() => handleOpenDetails(shop)}
-                        className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
-                      >
-                          <div>
-                              <span className="text-yellow-400 font-bold font-mono text-xl mr-3">{shop.id}</span>
-                              <span className="font-bold text-lg">{shop.name}</span>
-                              {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
-                          </div>
-                          <div className="text-gray-400 text-2xl">🔐 ›</div>
-                      </button>
-                   );
-              })}
+  return (
+    <div className="p-4 max-w-md mx-auto min-h-screen bg-gray-50 pb-20">
+      <div className="flex justify-between items-center mb-4">
+          <h1 className="text-xl font-bold text-gray-800">{shopData?.name} 管理</h1>
+          <button onClick={() => setIsLoggedIn(false)} className="text-xs text-gray-500 underline">ログアウト</button>
+      </div>
+      
+      {/* ステータス表示 */}
+      {shopData?.isAdminRestricted && (
+          <div className="bg-purple-100 text-purple-800 px-3 py-2 rounded text-xs font-bold mb-4 border border-purple-200 text-center">
+              🔒 指名スタッフ限定モードで稼働中
           </div>
       )}
 
-      {expandedShopId && targetShop && (
-          <div className="animate-fade-in">
-              <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">
-                  ← 会場一覧に戻る
-              </button>
+      {/* 受付停止ボタン */}
+      <div className="mb-6 p-4 bg-white rounded shadow text-center">
+         <p className="mb-2 text-sm text-gray-500">混雑時などに一時的に予約を止められます</p>
+         <button onClick={togglePause} className={`w-full py-3 font-bold rounded text-white shadow transition ${shopData?.isPaused ? "bg-red-500" : "bg-blue-500"}`}>
+             {shopData?.isPaused ? "⛔ 現在停止中 (再開する)" : "✅ 現在受付中 (停止する)"}
+         </button>
+      </div>
+      
+      {/* 予約状況概要 */}
+      <div className="bg-white p-4 rounded shadow mb-6">
+        <h2 className="font-bold border-b pb-2 mb-2 text-gray-700">現在の予約状況</h2>
+        <div className="text-sm">予約総数: <span className="font-bold">{shopData?.reservations?.length || 0}</span>件</div>
+        <p className="text-xs text-gray-400 mt-2">※生徒による予約の削除やBAN操作はできません。本部に連絡してください。</p>
+      </div>
 
-              <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
-                  <div className="bg-gray-700 p-4 flex justify-between items-center">
-                      <div>
-                          <h2 className="text-2xl font-bold flex items-center gap-2">
-                              <span className="text-yellow-400 font-mono">{targetShop.id}</span>
-                              {targetShop.name}
-                          </h2>
-                          <p className="text-xs text-gray-400 mt-1">Pass: **** | 定員: {targetShop.capacity}組</p>
-                      </div>
-                      <div className="flex gap-2">
-                          {/* 編集ボタン */}
-                          <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
-                          
-                          {/* 削除ボタンは生徒には不要な場合が多いですが、今回は残してあります。不要なら削除してください */}
-                          <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500">会場削除</button>
-                      </div>
-                  </div>
-
-                  <div className="p-4 space-y-6">
-                      {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
-                          const slotCount = targetShop.slots[time] || 0;
-                          const isFull = slotCount >= targetShop.capacity;
-
-                          return (
-                              <div key={time} className={`border rounded-lg p-3 ${isFull ? 'border-red-500/50 bg-red-900/10' : 'border-gray-600 bg-gray-900/50'}`}>
-                                  <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
-                                      <h3 className="font-bold text-lg text-blue-300">{time}</h3>
-                                      <span className={`text-sm font-bold ${isFull ? 'text-red-400' : 'text-green-400'}`}>
-                                          予約: {slotCount} / {targetShop.capacity}
-                                      </span>
-                                  </div>
-
-                                  <div className="space-y-2">
-                                      {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
-                                      
-                                      {reservations.map((res: any) => {
-                                          const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
-                                          
-                                          return (
-                                              <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
-                                                  <div>
-                                                      <div className="font-mono font-bold text-yellow-400">
-                                                          ID: {res.userId}
-                                                      </div>
-                                                      <div className="text-xs text-gray-300">
-                                                          {res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}
-                                                      </div>
-                                                  </div>
-                                                  
-                                                  <div className="flex gap-1">
-                                                      {res.status !== 'used' ? (
-                                                          <>
-                                                              <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="bg-green-600 text-xs px-3 py-1.5 rounded font-bold hover:bg-green-500">入場</button>
-                                                              <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
-                                                          </>
-                                                      ) : (
-                                                          <>
-                                                              <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
-                                                          </>
-                                                      )}
-                                                  </div>
-                                              </div>
-                                          );
-                                      })}
-                                  </div>
-                              </div>
-                          );
-                      })}
-                  </div>
-              </div>
-          </div>
-      )}
     </div>
   );
 }
