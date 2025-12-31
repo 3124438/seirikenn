@@ -63,7 +63,7 @@ export default function Home() {
   const usedTickets = myTickets.filter(t => t.status === "used");
 
   const handleBook = async (shop: any, time: string) => {
-    if (activeTickets.length >= 3) return alert("同時に持てる予約は3つまでです！\n入場すると枠が空きます。");
+    if (activeTickets.length >= 3) return alert("同時に持てる予約は3つまでです！\n入場又はキャンセルすると枠が空きます。");
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("すでに同じ時間を予約済みです！");
     if (shop.slots[time] >= shop.capacity) return alert("満席です。");
     if (shop.isPaused) return alert("現在、受付を停止しています。");
@@ -164,7 +164,7 @@ export default function Home() {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEnter(t)} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-500 transition">
-                  入場画面へ
+                  入場
                 </button>
                 <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
                   キャンセル
@@ -247,3 +247,5 @@ export default function Home() {
     </div>
   );
 }
+
+
