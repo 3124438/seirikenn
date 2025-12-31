@@ -24,10 +24,6 @@ export default function HackPage() {
   // 左側サイドバー検索用
   const [userSearchQuery, setUserSearchQuery] = useState("");
 
-  // リスト表示切り替え
-  const [showGuestWhite, setShowGuestWhite] = useState(false);
-  const [showStudentWhite, setShowStudentWhite] = useState(false);
-
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
@@ -66,7 +62,7 @@ export default function HackPage() {
       setConfigInputUserId(id);     // 下部の会場設定用
   };
 
-  // --- 機能実装 ---
+  // --- 機能: 全店舗一括停止 ---
   const toggleGlobalPause = async (currentState: boolean) => {
       if(!confirm(currentState ? "全店舗の受付を再開させますか？" : "全店舗 緊急停止しますか？")) return;
       attractions.forEach(async (shop) => {
@@ -74,6 +70,73 @@ export default function HackPage() {
       });
   };
 
+  // --- 機能: モード切替（White/Black） ---
+  const toggleListMode = async (type: "guest" | "student") => {
+      if (!selectedConfigShopId) return;
+      const targetShop = attractions.find(s => s.id === selectedConfigShopId);
+      if(!targetShop) return;
+      
+      const field = type === "guest" ? "guestListType" : "studentListType";
+      const currentMode = targetShop[field] === "white" ? "white" : "black";
+      const newMode = currentMode === "white" ? "black" : "white";
+
+      if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト(許可制)" : "ブラックリスト(拒否制)"}」に変更しますか？\n\n※ホワイトリストにすると、登録されていない人は一切操作できなくなります。`)) return;
+
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), {
+          [field]: newMode
+      });
+  };
+
+  // --- 機能: 全ユーザー一括追加（救済措置） ---
+  const addAllUsersToWhiteList = async (type: "guest" | "student") => {
+      if (!selectedConfigShopId) return;
+      const targetShop = attractions.find(s => s.id === selectedConfigShopId);
+      if(!targetShop) return;
+      
+      const field = type === "guest" ? "userAllowedUsers" : "adminAllowedUsers";
+      const currentList = targetShop[field] || [];
+      const idsToAdd = allUserIds.filter(id => !currentList.includes(id));
+
+      if(idsToAdd.length === 0) return alert("追加対象の新規ユーザーはいません。（全員登録済み）");
+
+      if(!confirm(`【注意】\n現在システムで認識している全ユーザー(${idsToAdd.length}人)を許可リストに追加しますか？\n\n※「モードをホワイトリストに変えたら誰も入れなくなった」などの緊急時に使用してください。`)) return;
+
+      try {
+          // Firebaseの制限で一度に大量に追加できない場合があるので注意が必要ですが、ここでは一括実行
+          await updateDoc(doc(db, "attractions", selectedConfigShopId), {
+              [field]: arrayUnion(...idsToAdd)
+          });
+          alert("完了しました");
+      } catch(e) {
+          console.error(e);
+          alert("エラーが発生しました。コンソールを確認してください。");
+      }
+  };
+
+  // --- 機能: リスト更新 ---
+  const handleListUpdate = async (type: "guest" | "student", action: "add" | "remove", userId: string) => {
+      if (!userId || !selectedConfigShopId) return;
+      const targetShop = attractions.find(s => s.id === selectedConfigShopId);
+      if(!targetShop) return;
+
+      // 現在のモード設定を取得
+      const isWhite = (type === "guest" ? targetShop.guestListType : targetShop.studentListType) === "white";
+
+      // モードに合わせて追加先フィールドを決定
+      // Whiteモードなら Allowed に追加、Blackモードなら Banned に追加
+      const targetField = type === "guest" 
+          ? (isWhite ? "userAllowedUsers" : "userBannedUsers")
+          : (isWhite ? "adminAllowedUsers" : "adminBannedUsers");
+
+      try {
+          await updateDoc(doc(db, "attractions", selectedConfigShopId), {
+              [targetField]: action === "add" ? arrayUnion(userId) : arrayRemove(userId)
+          });
+          if(action === "add") setConfigInputUserId(""); 
+      } catch (e) { console.error(e); alert("更新エラー"); }
+  };
+
+  // --- ユーザーデータ取得・ねじ込み関連 ---
   const fetchStudentData = () => {
     if(!targetStudentId) return alert("ユーザーを選択またはIDを入力してください");
     const foundReservations: any[] = [];
@@ -123,26 +186,6 @@ export default function HackPage() {
       });
       alert(`強制予約完了: ${shop.name} @ ${addTime}`);
       fetchStudentData();
-  };
-
-  const handleListUpdate = async (type: "guest" | "student", listType: "white" | "black", userId: string) => {
-      if (!userId || !selectedConfigShopId) return;
-      const targetField = type === "guest" ? (listType === "white" ? "userAllowedUsers" : "userBannedUsers") : (listType === "white" ? "adminAllowedUsers" : "adminBannedUsers");
-      const oppositeField = type === "guest" ? (listType === "white" ? "userBannedUsers" : "userAllowedUsers") : (listType === "white" ? "adminBannedUsers" : "adminAllowedUsers");
-
-      try {
-          await updateDoc(doc(db, "attractions", selectedConfigShopId), {
-              [targetField]: arrayUnion(userId),
-              [oppositeField]: arrayRemove(userId)
-          });
-          setConfigInputUserId(""); 
-      } catch (e) { console.error(e); alert("更新エラー"); }
-  };
-
-  const handleRemoveFromList = async (field: string, userId: string) => {
-      if (!selectedConfigShopId) return;
-      if (!confirm(`${userId} をリストから削除しますか？`)) return;
-      await updateDoc(doc(db, "attractions", selectedConfigShopId), { [field]: arrayRemove(userId) });
   };
 
   const targetShop = attractions.find(s => s.id === selectedConfigShopId);
@@ -248,7 +291,7 @@ export default function HackPage() {
                 className={`w-full py-4 px-6 rounded text-left flex justify-between items-center transition
                     ${showVenueConfig ? 'bg-gray-800 text-white' : 'bg-gray-900 hover:bg-gray-800 text-green-400 border border-green-900'}`}
               >
-                  <span className="text-xl font-bold">🛠️ 会場設定 (ブラックリスト/停止管理)</span>
+                  <span className="text-xl font-bold">🛠️ 会場設定 (ブラックリスト/ホワイトリスト管理)</span>
                   <span className="text-sm">{showVenueConfig ? "▲ 閉じる" : "▼ 開く"}</span>
               </button>
 
@@ -269,6 +312,10 @@ export default function HackPage() {
                                           {shop.isPaused && <span className="bg-red-600 text-white text-[10px] px-2 py-1 rounded">停止中</span>}
                                       </div>
                                       <span className="text-lg font-bold text-white block">{shop.name}</span>
+                                      <div className="mt-2 text-[10px] text-gray-400 flex gap-2">
+                                          <span>客: {shop.guestListType === 'white' ? '許可制' : '拒否制'}</span>
+                                          <span>生: {shop.studentListType === 'white' ? '許可制' : '拒否制'}</span>
+                                      </div>
                                   </button>
                               ))}
                           </div>
@@ -294,7 +341,7 @@ export default function HackPage() {
                                   </button>
                               </div>
 
-                              {/* リスト管理 */}
+                              {/* リスト追加用入力欄 */}
                               <div className="mb-4">
                                   <label className="text-xs text-gray-500 block mb-1">リストに追加するID (左サイドバーで選択可)</label>
                                   <input 
@@ -307,52 +354,93 @@ export default function HackPage() {
 
                               <div className="grid md:grid-cols-2 gap-6">
                                   {/* 客設定 */}
-                                  <div className={`p-4 rounded border ${showGuestWhite ? 'border-white bg-gray-800' : 'border-gray-600 bg-black'}`}>
+                                  <div className={`p-4 rounded border transition duration-300 ${targetShop.guestListType === 'white' ? 'border-white bg-green-900/20' : 'border-gray-600 bg-black'}`}>
                                       <div className="flex justify-between items-center mb-2">
                                           <h3 className="font-bold">一般客設定</h3>
-                                          <button onClick={() => setShowGuestWhite(!showGuestWhite)} className="text-xs underline text-gray-400">
-                                              {showGuestWhite ? "→ ブラックリストへ" : "→ ホワイトリストへ"}
-                                          </button>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-xs">{targetShop.guestListType === 'white' ? '現在: ホワイト(許可)リスト' : '現在: ブラック(拒否)リスト'}</span>
+                                            <button 
+                                                onClick={() => toggleListMode("guest")} 
+                                                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-500"
+                                            >
+                                                切替
+                                            </button>
+                                          </div>
                                       </div>
-                                      <p className="text-xs mb-4 text-gray-400">{showGuestWhite ? "ここに登録されたIDのみ予約可能" : "ここに登録されたIDは予約不可"}</p>
+                                      <p className="text-xs mb-4 text-gray-400">
+                                          {targetShop.guestListType === 'white' ? "※ リストにいる人だけが予約できます" : "※ リストにいる人は予約できません"}
+                                      </p>
                                       
                                       <button 
-                                        onClick={() => handleListUpdate("guest", showGuestWhite ? "white" : "black", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-4 ${showGuestWhite ? 'bg-white text-black' : 'bg-gray-700 text-white'}`}
+                                        onClick={() => handleListUpdate("guest", "add", configInputUserId)}
+                                        className={`w-full py-2 rounded font-bold mb-2 ${targetShop.guestListType === 'white' ? 'bg-green-700 text-white' : 'bg-red-900 text-white'}`}
                                       >
-                                          {showGuestWhite ? "ホワイトリストに追加" : "ブラックリストに追加"}
+                                          {targetShop.guestListType === 'white' ? "ホワイトリストに追加" : "ブラックリストに追加"}
                                       </button>
+
+                                      {/* 救済ボタン (Whiteモードのみ) */}
+                                      {targetShop.guestListType === 'white' && (
+                                          <button 
+                                            onClick={() => addAllUsersToWhiteList("guest")}
+                                            className="w-full py-2 mb-4 bg-green-900/50 border border-green-500 text-green-200 text-xs rounded hover:bg-green-800"
+                                          >
+                                              ＋ 全ユーザーを一括許可 (救済)
+                                          </button>
+                                      )}
+
                                       <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.map((uid: string) => (
+                                          {(targetShop.guestListType === 'white' ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.map((uid: string) => (
                                               <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
                                                   <span>{uid}</span>
-                                                  <button onClick={() => handleRemoveFromList(showGuestWhite ? "userAllowedUsers" : "userBannedUsers", uid)} className="text-red-500 hover:text-red-300">削除</button>
+                                                  <button onClick={() => handleListUpdate("guest", "remove", uid)} className="text-red-500 hover:text-red-300">削除</button>
                                               </li>
                                           ))}
+                                          <li className="text-[10px] text-right text-gray-500 mt-2">
+                                            {(targetShop.guestListType === 'white' ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.length || 0}人 登録中
+                                          </li>
                                       </ul>
                                   </div>
 
                                   {/* 生徒設定 */}
-                                  <div className={`p-4 rounded border ${showStudentWhite ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
+                                  <div className={`p-4 rounded border transition duration-300 ${targetShop.studentListType === 'white' ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
                                       <div className="flex justify-between items-center mb-2">
                                           <h3 className="font-bold text-blue-300">運営生徒設定</h3>
-                                          <button onClick={() => setShowStudentWhite(!showStudentWhite)} className="text-xs underline text-gray-400">
-                                              {showStudentWhite ? "→ ブラックリストへ" : "→ ホワイトリストへ"}
-                                          </button>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-xs">{targetShop.studentListType === 'white' ? '現在: ホワイト(許可)' : '現在: ブラック(拒否)'}</span>
+                                            <button 
+                                                onClick={() => toggleListMode("student")} 
+                                                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-500"
+                                            >
+                                                切替
+                                            </button>
+                                          </div>
                                       </div>
-                                      <p className="text-xs mb-4 text-gray-400">{showStudentWhite ? "ここに登録されたIDのみ管理可" : "ここに登録されたIDは管理不可"}</p>
+                                      <p className="text-xs mb-4 text-gray-400">
+                                          {targetShop.studentListType === 'white' ? "※ リストにいる人だけが管理画面に入れます" : "※ リストにいる人は管理画面に入れません"}
+                                      </p>
 
                                       <button 
-                                        onClick={() => handleListUpdate("student", showStudentWhite ? "white" : "black", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-4 ${showStudentWhite ? 'bg-blue-600 text-white' : 'bg-purple-800 text-white'}`}
+                                        onClick={() => handleListUpdate("student", "add", configInputUserId)}
+                                        className={`w-full py-2 rounded font-bold mb-2 ${targetShop.studentListType === 'white' ? 'bg-blue-600 text-white' : 'bg-purple-800 text-white'}`}
                                       >
-                                          {showStudentWhite ? "ホワイトリストに追加" : "ブラックリストに追加"}
+                                          {targetShop.studentListType === 'white' ? "ホワイトリストに追加" : "ブラックリストに追加"}
                                       </button>
+
+                                      {/* 救済ボタン (Whiteモードのみ) */}
+                                      {targetShop.studentListType === 'white' && (
+                                          <button 
+                                            onClick={() => addAllUsersToWhiteList("student")}
+                                            className="w-full py-2 mb-4 bg-blue-900/50 border border-blue-500 text-blue-200 text-xs rounded hover:bg-blue-800"
+                                          >
+                                              ＋ 全ユーザーを一括許可 (救済)
+                                          </button>
+                                      )}
+
                                       <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
+                                          {(targetShop.studentListType === 'white' ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
                                               <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
                                                   <span>{uid}</span>
-                                                  <button onClick={() => handleRemoveFromList(showStudentWhite ? "adminAllowedUsers" : "adminBannedUsers", uid)} className="text-red-500 hover:text-red-300">削除</button>
+                                                  <button onClick={() => handleListUpdate("student", "remove", uid)} className="text-red-500 hover:text-red-300">削除</button>
                                               </li>
                                           ))}
                                       </ul>
@@ -431,4 +519,3 @@ export default function HackPage() {
     </div>
   );
 }
-
