@@ -29,8 +29,21 @@ export default function Home() {
     }
     setUserId(storedId);
 
-    // 2. データのリアルタイム取得
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
+    // 2. BANチェック (blacklistの監視)
+    const unsubBan = onSnapshot(doc(db, "system", "blacklist"), (docSnap) => {
+      if (docSnap.exists()) {
+        const bannedList = docSnap.data().ids || [];
+        // もし自分のIDがブラックリストに入っていたら
+        if (bannedList.includes(storedId)) { 
+           alert("あなたのアカウントは管理者により利用停止されています。\n実行委員本部までお問い合わせください。");
+           // 画面を強制的に書き換えて操作不能にする
+           document.body.innerHTML = "<div style='color:red; text-align:center; margin-top:50px; font-weight:bold; font-family:sans-serif;'>ACCESS DENIED<br>利用停止処分中です</div>";
+        }
+      }
+    });
+
+    // 3. データのリアルタイム取得 (attractionsの監視)
+    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(data);
 
@@ -56,7 +69,11 @@ export default function Home() {
       setMyTickets(myFoundTickets);
     });
 
-    return () => unsub();
+    // クリーンアップ関数: 画面を閉じる時に監視を解除する
+    return () => {
+        unsubBan();
+        unsubAttractions();
+    };
   }, []);
 
   const activeTickets = myTickets.filter(t => t.status === "reserved");
@@ -152,7 +169,7 @@ export default function Home() {
       {activeTickets.length > 0 && (
         <div className="mb-8 space-y-4">
           <p className="text-blue-900 text-sm font-bold flex items-center gap-1">
-             現在の予約チケット
+             🎟️ 現在の予約チケット
           </p>
           {activeTickets.map((t) => (
             <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow-lg relative overflow-hidden">
@@ -164,7 +181,7 @@ export default function Home() {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEnter(t)} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-lg shadow hover:bg-blue-500 transition">
-                  入場
+                  入場画面へ
                 </button>
                 <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
                   キャンセル
@@ -219,12 +236,12 @@ export default function Home() {
         </div>
       )}
 
-      {/* 3. 入場済み履歴エリア (一番下に移動) */}
+      {/* 3. 入場済み履歴エリア (一番下に移動済み) */}
       {usedTickets.length > 0 && (
         <div className="mt-12 mb-8">
             <details className="group">
                 <summary className="text-gray-400 text-xs text-center cursor-pointer list-none flex justify-center items-center gap-2 mb-2 hover:text-gray-600">
-                    入場済みの履歴を見る ({usedTickets.length})
+                    📂 入場済みの履歴を見る ({usedTickets.length})
                 </summary>
                 <div className="space-y-2 pl-2 border-l-2 border-gray-200 mt-2">
                     {usedTickets.map((t) => (
@@ -247,5 +264,3 @@ export default function Home() {
     </div>
   );
 }
-
-
