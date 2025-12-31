@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-import { db, auth } from "../../../../firebase"; // パスは環境に合わせて調整してください
+import { db, auth } from "../../../../firebase"; 
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, setDoc, getDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
@@ -32,7 +32,7 @@ export default function GodModePage() {
       setAllUserIds(Array.from(ids).sort());
     });
 
-    // 2. ブラックリストの監視 (systemコレクション -> blacklistドキュメント)
+    // 2. ブラックリストの監視
     const unsubBan = onSnapshot(doc(db, "system", "blacklist"), (docSnap) => {
       if (docSnap.exists()) {
         setBannedIds(docSnap.data().ids || []);
@@ -59,6 +59,8 @@ export default function GodModePage() {
         }
       });
     });
+    // 日付順にならべる
+    tickets.sort((a, b) => b.timestamp - a.timestamp);
     setTargetUserTickets(tickets);
   }, [targetUserId, attractions]);
 
@@ -77,16 +79,15 @@ export default function GodModePage() {
     alert(isBanned ? "BANを解除しました" : "このユーザーをBANしました");
   };
 
-  // 代理予約 (強制ねじ込み)
+  // 強制予約 (代理予約)
   const handleProxyBook = async () => {
     if (!targetUserId || !proxyShopId || !proxyTime) return;
     const shop = attractions.find(s => s.id === proxyShopId);
     if (!shop) return;
 
-    if (!confirm(`【強制予約】\nUser: ${targetUserId}\nShop: ${shop.name}\nTime: ${proxyTime}\n実行しますか？`)) return;
+    if (!confirm(`【強制予約を実行】\n対象ID: ${targetUserId}\n店舗: ${shop.name}\n時間: ${proxyTime}\n\nこの内容でチケットを発行しますか？`)) return;
 
     try {
-      // 既存の人数カウントなどは無視してねじ込むことも可能ですが、ここでは正規の手順でカウントアップさせます
       await updateDoc(doc(db, "attractions", proxyShopId), {
         [`slots.${proxyTime}`]: increment(1),
         reservations: arrayUnion({
@@ -94,19 +95,19 @@ export default function GodModePage() {
             time: proxyTime,
             timestamp: Date.now(),
             status: "reserved",
-            note: "admin_proxy" // 管理者による追加の目印
+            note: "admin_proxy" // 管理者操作の証拠
         })
       });
-      alert("代理予約完了");
+      alert("強制予約が完了しました");
     } catch (e) {
       console.error(e);
       alert("エラー: " + e);
     }
   };
 
-  // 強制キャンセル
+  // 強制キャンセル (予約削除)
   const handleForceCancel = async (ticket: any) => {
-    if(!confirm("この予約を強制削除しますか？")) return;
+    if(!confirm(`【警告】\n${ticket.shopName} (${ticket.time})\n\nこの予約を完全に削除しますか？\n(スロットの空き数も1つ戻ります)`)) return;
     try {
         await updateDoc(doc(db, "attractions", ticket.shopId), {
             [`slots.${ticket.time}`]: increment(-1),
@@ -114,96 +115,214 @@ export default function GodModePage() {
                 userId: ticket.userId,
                 time: ticket.time,
                 timestamp: ticket.timestamp,
-                status: ticket.status
+                status: ticket.status,
+                note: ticket.note || null // noteがある場合への対応（型合わせのため厳密には本来もう少しケアが必要ですが簡易実装）
             })
         });
-        // 備考: status: "used" のものなど細かい一致が必要なので、実運用ではID検索などで厳密にやるほうが良いですが、今回は簡易版
-        alert("削除しました");
+        
+        // 配列削除は完全一致が必要なため、もしnoteの有無で削除失敗する場合は
+        // note無しのパターンもトライするなどの工夫がいりますが、一旦標準データで削除試行
+        // (厳密にはIDでfilterしてupdateする方が安全ですが、既存構造維持のためこのままいきます)
+
+        // 念のためnoteあり/なし両方消すトライ（安全策）
+        const baseObj = {
+            userId: ticket.userId,
+            time: ticket.time,
+            timestamp: ticket.timestamp,
+            status: ticket.status
+        };
+        // noteプロパティがあるデータの場合
+        if(ticket.note) {
+             // 上ですでに実行済み
+        } else {
+             // noteがないデータとして再トライ(念の為)
+             await updateDoc(doc(db, "attractions", ticket.shopId), {
+                reservations: arrayRemove(baseObj)
+            });
+        }
+
+        alert("予約を削除しました");
     } catch(e) {
-        alert("削除失敗(データ不整合の可能性あり)");
+        alert("削除失敗: データが一致しない可能性があります");
+        console.error(e);
+    }
+  };
+
+  // ステータス変更 (強制入場 / 入場キャンセル)
+  const handleToggleStatus = async (ticket: any) => {
+    const isUsed = ticket.status === "used";
+    const newStatus = isUsed ? "reserved" : "used";
+    const actionName = isUsed ? "「未入場」に戻す" : "「入場済み」にする";
+
+    if(!confirm(`${ticket.shopName} (${ticket.time})\n\nこのチケットを${actionName}ですか？`)) return;
+
+    try {
+        // 古いデータを削除
+        await updateDoc(doc(db, "attractions", ticket.shopId), {
+            reservations: arrayRemove({
+                userId: ticket.userId,
+                time: ticket.time,
+                timestamp: ticket.timestamp,
+                status: ticket.status,
+                ...(ticket.note ? { note: ticket.note } : {})
+            })
+        });
+        // 新しいステータスで追加
+        await updateDoc(doc(db, "attractions", ticket.shopId), {
+            reservations: arrayUnion({
+                userId: ticket.userId,
+                time: ticket.time,
+                timestamp: ticket.timestamp,
+                status: newStatus,
+                ...(ticket.note ? { note: ticket.note } : {})
+            })
+        });
+        alert(`ステータスを変更しました: ${newStatus}`);
+    } catch(e) {
+        alert("変更失敗");
+        console.error(e);
     }
   };
 
   return (
-    <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
-      <h1 className="text-2xl font-bold border-b border-green-700 pb-2 mb-4">
-        /// COUNCIL HACK MODE ///
-      </h1>
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 font-sans text-sm">
+      <header className="flex justify-between items-center border-b border-gray-700 pb-4 mb-6">
+        <div>
+            <h1 className="text-2xl font-bold text-red-500">裏管理システム (Hack Mode)</h1>
+            <p className="text-gray-400 text-xs">Admin Control Panel - Authorized Personnel Only</p>
+        </div>
+        <div className="bg-gray-800 px-4 py-2 rounded text-right">
+            <div className="text-xs text-gray-400">Total Users</div>
+            <div className="text-xl font-bold font-mono">{allUserIds.length}</div>
+        </div>
+      </header>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         
         {/* 左カラム: ユーザーリスト */}
-        <div className="border border-green-800 p-2 h-[80vh] overflow-y-auto">
-          <h2 className="text-sm font-bold mb-2 text-green-600">DETECTED IDs ({allUserIds.length})</h2>
-          <ul>
+        <div className="md:col-span-1 border border-gray-700 rounded bg-gray-800 flex flex-col h-[80vh]">
+          <div className="p-3 border-b border-gray-700 bg-gray-700 font-bold text-gray-300">
+            検知されたID一覧
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
             {allUserIds.map(id => (
-              <li key={id}>
-                <button 
-                  onClick={() => setTargetUserId(id)}
-                  className={`w-full text-left px-2 py-1 hover:bg-green-900 ${targetUserId === id ? "bg-green-800 text-white" : ""} ${bannedIds.includes(id) ? "line-through text-red-500" : ""}`}
-                >
-                  {id} {bannedIds.includes(id) && "[BAN]"}
-                </button>
-              </li>
+              <button 
+                key={id}
+                onClick={() => setTargetUserId(id)}
+                className={`w-full text-left px-3 py-2 rounded text-xs font-mono transition-all flex justify-between items-center
+                  ${targetUserId === id 
+                    ? "bg-blue-600 text-white shadow-lg scale-105" 
+                    : "hover:bg-gray-700 text-gray-400"} 
+                  ${bannedIds.includes(id) ? "opacity-50" : ""}`}
+              >
+                <span>{id}</span>
+                {bannedIds.includes(id) && <span className="bg-red-500 text-white text-[10px] px-1 rounded">BAN</span>}
+              </button>
             ))}
-          </ul>
+          </div>
         </div>
 
-        {/* 右カラム: 詳細操作 */}
-        <div className="md:col-span-2 space-y-6">
+        {/* 右カラム: 詳細操作エリア */}
+        <div className="md:col-span-3 space-y-6">
           {targetUserId ? (
             <>
-              <div className="border border-green-600 p-4 bg-gray-900">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-bold text-white">TARGET: {targetUserId}</h2>
-                    <button 
-                        onClick={toggleBan}
-                        className={`px-4 py-1 font-bold ${bannedIds.includes(targetUserId) ? "bg-blue-600 text-white" : "bg-red-600 text-black"}`}
-                    >
-                        {bannedIds.includes(targetUserId) ? "BAN解除 (UNBAN)" : "BAN実行 (EXECUTE)"}
-                    </button>
+              {/* ユーザーヘッダー */}
+              <div className="bg-gray-800 p-4 rounded border border-gray-700 flex justify-between items-center shadow-lg">
+                <div>
+                    <h2 className="text-xs text-gray-400 mb-1">TARGET USER ID</h2>
+                    <div className="text-3xl font-bold font-mono text-white tracking-widest">{targetUserId}</div>
+                </div>
+                <button 
+                    onClick={toggleBan}
+                    className={`px-6 py-2 rounded font-bold transition shadow ${bannedIds.includes(targetUserId) ? "bg-blue-500 hover:bg-blue-400 text-white" : "bg-red-600 hover:bg-red-500 text-white"}`}
+                >
+                    {bannedIds.includes(targetUserId) ? "BANを解除する" : "このIDをBANする"}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* 1. 予約リスト & 操作 */}
+                <div className="space-y-4">
+                    <h3 className="font-bold text-gray-300 border-l-4 border-blue-500 pl-2">所持チケットの操作</h3>
+                    {targetUserTickets.length === 0 ? (
+                        <p className="text-gray-500 p-4 bg-gray-800 rounded">予約データなし</p>
+                    ) : (
+                        <div className="space-y-3">
+                            {targetUserTickets.map((t, i) => (
+                                <div key={i} className={`p-3 rounded border shadow-sm relative ${t.status === 'used' ? 'bg-gray-700 border-gray-600 opacity-70' : 'bg-white text-gray-900 border-blue-500'}`}>
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div>
+                                            <div className="font-bold text-sm">{t.shopName}</div>
+                                            <div className="text-xl font-bold font-mono">{t.time}</div>
+                                            <div className="text-xs mt-1">
+                                                状態: 
+                                                <span className={`ml-1 font-bold ${t.status === 'used' ? 'text-gray-400' : 'text-green-600'}`}>
+                                                    {t.status === 'reserved' ? '予約中' : '入場済み'}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <button onClick={() => handleForceCancel(t)} className="bg-red-100 text-red-600 px-2 py-1 rounded text-xs border border-red-200 hover:bg-red-200">
+                                            削除
+                                        </button>
+                                    </div>
+                                    
+                                    {/* ステータス切替ボタン */}
+                                    <button onClick={() => handleToggleStatus(t)} className="w-full py-1 text-xs font-bold rounded bg-gray-200 hover:bg-gray-300 text-gray-700">
+                                        {t.status === 'reserved' ? '▼ 強制入場済みにする' : '▲ 未入場に戻す'}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
-                {/* 予約状況 */}
-                <h3 className="text-sm text-gray-400 border-b border-gray-700 mb-2">CURRENT TICKETS</h3>
-                {targetUserTickets.length === 0 ? <p>No tickets found.</p> : (
-                    <ul className="space-y-2 mb-6">
-                        {targetUserTickets.map((t, i) => (
-                            <li key={i} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700">
-                                <span>{t.shopName} @ {t.time} <span className="text-xs text-gray-500">({t.status})</span></span>
-                                <button onClick={() => handleForceCancel(t)} className="text-red-400 hover:text-red-200 text-xs">[DEL]</button>
-                            </li>
-                        ))}
-                    </ul>
-                )}
+                {/* 2. 新規代理予約 (変更用) */}
+                <div className="space-y-4">
+                    <h3 className="font-bold text-gray-300 border-l-4 border-green-500 pl-2">強制代理予約 (変更/追加)</h3>
+                    <div className="bg-gray-800 p-4 rounded border border-gray-700">
+                        <p className="text-xs text-gray-400 mb-4">
+                            ※予約内容を変更したい場合は、左側のリストで「削除」してから、ここで新しい時間を予約してください。
+                        </p>
+                        
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-xs text-gray-500 mb-1">出し物を選択</label>
+                                <select className="w-full bg-gray-900 border border-gray-600 text-white p-2 rounded" onChange={e => setProxyShopId(e.target.value)} value={proxyShopId}>
+                                    <option value="">-- 選択してください --</option>
+                                    {attractions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-xs text-gray-500 mb-1">時間を選択</label>
+                                <select className="w-full bg-gray-900 border border-gray-600 text-white p-2 rounded" onChange={e => setProxyTime(e.target.value)} value={proxyTime}>
+                                    <option value="">-- 選択してください --</option>
+                                    {proxyShopId && attractions.find(s=>s.id===proxyShopId)?.slots && 
+                                        Object.keys(attractions.find(s=>s.id===proxyShopId).slots).sort().map(t => (
+                                            <option key={t} value={t}>{t}</option>
+                                        ))
+                                    }
+                                </select>
+                            </div>
 
-                {/* 代理予約フォーム */}
-                <div className="border-t border-gray-700 pt-4 mt-4">
-                    <h3 className="text-sm text-yellow-500 mb-2">INJECT RESERVATION (代理予約)</h3>
-                    <div className="flex gap-2 mb-2">
-                        <select className="bg-gray-800 border border-green-800 p-1" onChange={e => setProxyShopId(e.target.value)} value={proxyShopId}>
-                            <option value="">Select Shop...</option>
-                            {attractions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                        </select>
-                        <select className="bg-gray-800 border border-green-800 p-1" onChange={e => setProxyTime(e.target.value)} value={proxyTime}>
-                            <option value="">Time...</option>
-                            {/* 選択中の店のスロットを表示 */}
-                            {proxyShopId && attractions.find(s=>s.id===proxyShopId)?.slots && 
-                                Object.keys(attractions.find(s=>s.id===proxyShopId).slots).sort().map(t => (
-                                    <option key={t} value={t}>{t}</option>
-                                ))
-                            }
-                        </select>
+                            <button 
+                                onClick={handleProxyBook} 
+                                disabled={!proxyShopId || !proxyTime} 
+                                className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded mt-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                この内容で強制予約する
+                            </button>
+                        </div>
                     </div>
-                    <button onClick={handleProxyBook} disabled={!proxyShopId || !proxyTime} className="bg-green-700 text-black px-4 py-2 font-bold w-full hover:bg-green-600 disabled:opacity-50">
-                        INJECT
-                    </button>
                 </div>
+
               </div>
             </>
           ) : (
-            <div className="text-center text-gray-500 mt-20">
-              Select a User ID from the list to inspect.
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 opacity-50">
+                <div className="text-6xl mb-4">☜</div>
+                <p>左のリストから操作したいユーザーIDを選択してください</p>
             </div>
           )}
         </div>
