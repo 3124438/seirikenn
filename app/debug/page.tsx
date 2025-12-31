@@ -278,7 +278,7 @@ export default function AdminPage() {
                 </div>
             ) : (
                 <div className="bg-gray-800/50 rounded p-3 mb-4 border border-gray-700 text-center text-xs text-gray-500">
-                    ※ 会場の新規作成機能は現在無効化されています。設定を変更するには、下のリストから会場を選び「設定編集」ボタンを押してください。
+                    ※設定を変更するには、下のリストから会場を選び「設定編集」ボタンを押してください。
                 </div>
             )}
 
@@ -417,3 +417,5 @@ export default function AdminPage() {
     </div>
   );
 }
+
+
