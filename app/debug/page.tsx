@@ -46,13 +46,20 @@ export default function AdminPage() {
       const shop = attractions.find(s => s.id === shopId);
       if (!shop) return;
 
-      // ★ 編集権限剥奪チェック
+      // 1. パスワード認証 (入室前に必ず確認)
+      const inputPass = prompt(`「${shop.name}」の管理用パスワードを入力してください`);
+      if (inputPass !== shop.password) {
+          alert("パスワードが違います");
+          return;
+      }
+
+      // 2. 編集権限剥奪チェック
       if (shop.adminBannedUsers && shop.adminBannedUsers.includes(myUserId)) {
           alert(`⛔ 権限エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の管理権限を剥奪されています。`);
           return;
       }
 
-      // ★ 制限モード（指名限定）チェック
+      // 3. 制限モード（指名限定）チェック
       if (shop.isAdminRestricted) {
           if (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId)) {
               alert(`🔒 アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
@@ -72,7 +79,7 @@ export default function AdminPage() {
   };
 
   const startEdit = (shop: any) => {
-    // 念のためここでも権限チェック
+    // 念のためここでも権限チェック（本来は開けないので到達しないはずだが念のため）
     if (shop.adminBannedUsers?.includes(myUserId)) return alert("権限がありません");
 
     setIsEditing(true);
@@ -188,7 +195,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
       
-      {/* ★ ユーザーID表示バー (最上部固定風) */}
+      {/* ユーザーID表示バー (最上部) */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
           <div className="text-xs text-gray-400">Logged in as:</div>
           <div className="font-mono font-bold text-yellow-400 text-lg tracking-wider">
@@ -201,16 +208,29 @@ export default function AdminPage() {
         <div className="mb-6 border-b border-gray-700 pb-4">
             <h1 className="text-2xl font-bold text-white mb-4">全店舗統合管理</h1>
             
-            {/* 新規作成フォーム（常時表示または折りたたみ） */}
+            {/* 新規作成・編集設定フォーム */}
             <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4">
                 <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
                 <div className="mt-4 pt-4 border-t border-gray-700">
                     <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${manualId} を編集中` : "新規作成"}</h3>
                     <div className="grid gap-2 md:grid-cols-3 mb-2">
-                        <input disabled={isEditing} className="bg-gray-700 p-2 rounded text-white" placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} />
+                        {/* ID入力 (編集中は変更不可) */}
+                        <input disabled={isEditing} className={`bg-gray-700 p-2 rounded text-white ${isEditing ? 'opacity-50 cursor-not-allowed' : ''}`} placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} />
+                        
+                        {/* 名前入力 */}
                         <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
-                        <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
+                        
+                        {/* パスワード入力 (編集中は変更不可！) */}
+                        <input 
+                            disabled={isEditing} 
+                            className={`bg-gray-700 p-2 rounded text-white ${isEditing ? 'opacity-50 cursor-not-allowed' : ''}`} 
+                            placeholder={isEditing ? "変更不可" : "パスワード(5桁)"} 
+                            maxLength={5} 
+                            value={password} 
+                            onChange={e => setPassword(e.target.value)} 
+                        />
                     </div>
+                    
                     <div className="grid grid-cols-4 gap-2 mb-2">
                         <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
                         <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
@@ -228,10 +248,11 @@ export default function AdminPage() {
                         <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">{isEditing ? "変更を保存" : "会場を作成"}</button>
                         {isEditing && <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>}
                     </div>
+                    {isEditing && <p className="text-xs text-red-400 mt-2">※パスワードとIDは編集できません（削除して作り直してください）</p>}
                 </div>
             </details>
 
-            {/* ユーザーID検索（どこからでも探せるように） */}
+            {/* ユーザーID検索 */}
             <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600">
                 <span className="text-xl">🔍</span>
                 <input 
@@ -257,30 +278,23 @@ export default function AdminPage() {
                     // 検索フィルター
                     const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                     
-                    // 権限チェック用フラグ (表示用)
-                    const isBanned = shop.adminBannedUsers?.includes(myUserId);
-                    const isRestricted = shop.isAdminRestricted && (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId));
-                    const isLocked = isBanned || isRestricted;
-
                     return (
                         <button 
                             key={shop.id} 
-                            onClick={() => handleExpandShop(shop.id)} // クリック時に権限チェック
-                            className={`p-4 rounded-xl border text-left flex justify-between items-center transition 
-                                ${isLocked ? 'bg-gray-800/50 border-gray-700 opacity-60 cursor-not-allowed' : 'hover:bg-gray-800'}
-                                ${hasUser ? 'bg-pink-900/40 border-pink-500' : isLocked ? '' : 'bg-gray-800 border-gray-600'}
+                            onClick={() => handleExpandShop(shop.id)} // クリック時にパスワード＆権限チェック
+                            className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800
+                                ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}
                             `}
                         >
                             <div>
                                 <div className="flex items-center gap-2">
                                     <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
-                                    {isLocked && <span className="text-xs bg-red-900 text-red-200 px-1 rounded">アクセス不可</span>}
                                 </div>
                                 <span className="font-bold text-lg">{shop.name}</span>
                                 {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
                             </div>
                             <div className="text-gray-400 text-2xl">
-                                {isLocked ? "🔒" : "›"}
+                                ›
                             </div>
                         </button>
                     );
@@ -304,7 +318,7 @@ export default function AdminPage() {
                                 <span className="text-yellow-400 font-mono">{targetShop.id}</span>
                                 {targetShop.name}
                             </h2>
-                            <p className="text-xs text-gray-400 mt-1">Pass: {targetShop.password} | 定員: {targetShop.capacity}組</p>
+                            <p className="text-xs text-gray-400 mt-1">Pass: **** | 定員: {targetShop.capacity}組</p>
                         </div>
                         <div className="flex gap-2">
                             <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
@@ -333,7 +347,6 @@ export default function AdminPage() {
                                         {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
                                         
                                         {reservations.map((res: any) => {
-                                            // 検索ハイライト
                                             const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
                                             
                                             return (
@@ -354,7 +367,6 @@ export default function AdminPage() {
                                                                 <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
                                                             </>
                                                         ) : (
-                                                            // 入場済みの時の操作
                                                             <>
                                                                 <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
                                                             </>
