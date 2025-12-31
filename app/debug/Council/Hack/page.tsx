@@ -183,7 +183,8 @@ export default function HackPage() {
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 1) - 1) };
       await updateDoc(doc(db, "attractions", res.shopId), { reservations: otherRes, slots: updatedSlots });
-      setIsModalOpen(false);
+      setIsModalOpen(false); // 状態が変わるため一旦閉じる（または再度fetchStudentDataを呼ぶ）
+      fetchStudentData();
   };
 
   const forceAddReservation = async () => {
@@ -413,7 +414,7 @@ export default function HackPage() {
                                               </li>
                                           ))}
                                           <li className="text-[10px] text-right text-gray-500 mt-2">
-                                            {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.length || 0}人 登録中
+                                              {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.length || 0}人 登録中
                                           </li>
                                       </ul>
                                   </div>
@@ -486,3 +487,76 @@ export default function HackPage() {
                       <h3 className="text-sm font-bold text-gray-400 mb-2">現在の予約状況</h3>
                       <div className="space-y-2">
                           {studentReservations.map((res, idx) => (
+                              <div key={idx} className="bg-black/50 border border-gray-600 p-3 rounded mb-2 flex justify-between items-center">
+                                  <div>
+                                      <div className="font-bold text-white">{res.shopName}</div>
+                                      <div className="text-xs text-gray-400 font-mono">
+                                          {res.time} 
+                                          <span className={`ml-2 ${res.status === 'used' ? 'text-gray-500' : 'text-green-400'}`}>
+                                              ({res.status === 'used' ? '使用済' : '予約中'})
+                                          </span>
+                                      </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                      {/* ステータス変更ボタン */}
+                                      <button 
+                                        onClick={() => forceToggleStatus(res, res.status === 'reserved' ? 'used' : 'reserved')} 
+                                        className="text-xs border border-blue-500 text-blue-400 px-2 py-1 rounded hover:bg-blue-900 transition"
+                                      >
+                                          {res.status === 'reserved' ? '使用済にする' : '予約に戻す'}
+                                      </button>
+                                      {/* 削除ボタン */}
+                                      <button 
+                                        onClick={() => forceDeleteReservation(res)} 
+                                        className="text-xs border border-red-500 text-red-400 px-2 py-1 rounded hover:bg-red-900 transition"
+                                      >
+                                          削除
+                                      </button>
+                                  </div>
+                              </div>
+                          ))}
+                          
+                          {studentReservations.length === 0 && (
+                            <p className="text-gray-500 text-center text-sm py-4">予約履歴はありません</p>
+                          )}
+                      </div>
+                  </div>
+
+                  {/* --- 強制予約フォーム (管理者権限) --- */}
+                  <div className="border-t border-gray-700 pt-6 mt-6">
+                     <h3 className="text-lg font-bold text-white mb-4">強制予約追加</h3>
+                     <div className="flex gap-4 mb-4">
+                        {/* 会場選択 */}
+                        <select 
+                          className="bg-black text-white border border-gray-600 p-2 rounded flex-1"
+                          value={addShopId}
+                          onChange={(e) => setAddShopId(e.target.value)}
+                        >
+                          <option value="">会場を選択...</option>
+                          {attractions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                        
+                        {/* 時間選択 */}
+                        <select 
+                          className="bg-black text-white border border-gray-600 p-2 rounded flex-1"
+                          value={addTime}
+                          onChange={(e) => setAddTime(e.target.value)}
+                        >
+                          <option value="">時間を選択...</option>
+                          {targetShopTimes.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                     </div>
+                     <button 
+                       onClick={forceAddReservation} 
+                       className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded transition shadow-lg shadow-yellow-900/20"
+                     >
+                        ＋ このユーザーとして予約を追加
+                     </button>
+                  </div>
+
+              </div>
+          </div>
+      )}
+    </div>
+  );
+}
