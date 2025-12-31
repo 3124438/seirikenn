@@ -178,13 +178,17 @@ export default function Home() {
       {activeTickets.length > 0 && (
         <div className="mb-8 space-y-4">
           <p className="text-blue-900 text-sm font-bold flex items-center gap-1">
-             🎟️ 現在の予約チケット
+              🎟️ 現在の予約チケット
           </p>
           {activeTickets.map((t) => (
             <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow-lg relative overflow-hidden">
               <div className="flex justify-between items-center mb-3">
                 <div>
-                    <h2 className="font-bold text-lg">{t.shopName}</h2>
+                    {/* ★ IDを追加 */}
+                    <h2 className="font-bold text-lg flex items-center">
+                        <span className="text-blue-600 font-mono mr-2 text-xl">{t.shopId}</span>
+                        {t.shopName}
+                    </h2>
                     <p className="text-3xl font-bold text-blue-600 font-mono">{t.time}</p>
                 </div>
               </div>
@@ -209,11 +213,13 @@ export default function Home() {
             <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-4 rounded-xl shadow-sm border text-left flex justify-between items-center hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
               <div>
                   <span className="font-bold text-lg flex items-center gap-2">
+                      {/* ★ IDを追加 */}
+                      <span className="text-yellow-600 font-mono font-bold text-xl">{shop.id}</span>
                       {shop.name}
                       {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
                       {shop.isRestricted && <span className="bg-purple-600 text-white text-[10px] px-2 py-0.5 rounded">招待制</span>}
                   </span>
-                  <div className="text-xs text-gray-400">{shop.openTime}-{shop.closeTime} (各{shop.groupLimit}名まで)</div>
+                  <div className="text-xs text-gray-400 pl-8">{shop.openTime}-{shop.closeTime} (各{shop.groupLimit}名まで)</div>
               </div>
               <span className="bg-gray-100 px-2 py-1 rounded text-gray-500 font-mono text-xs">詳細 &gt;</span>
             </button>
@@ -223,6 +229,8 @@ export default function Home() {
         <div>
           <button onClick={() => setSelectedShop(null)} className="mb-4 text-sm text-gray-500 flex items-center gap-1">← もどる</button>
           <h2 className="text-2xl font-bold mb-1 flex items-center gap-2">
+              {/* ★ IDを追加 */}
+              <span className="text-yellow-600 font-mono">{selectedShop.id}</span>
               {selectedShop.name}
               {selectedShop.isRestricted && <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded">招待制モード中</span>}
           </h2>
@@ -263,7 +271,11 @@ export default function Home() {
                     {usedTickets.map((t) => (
                         <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
                             <div>
-                                <h2 className="font-bold text-sm text-gray-600">{t.shopName}</h2>
+                                {/* ★ IDを追加 */}
+                                <h2 className="font-bold text-sm text-gray-600 flex items-center">
+                                    <span className="text-gray-400 font-mono mr-2">{t.shopId}</span>
+                                    {t.shopName}
+                                </h2>
                                 <p className="text-sm font-bold text-gray-500">{t.time}</p>
                             </div>
                             <div className="text-xs font-bold text-white bg-gray-400 px-2 py-1 rounded">
@@ -280,5 +292,3 @@ export default function Home() {
     </div>
   );
 }
-
-
