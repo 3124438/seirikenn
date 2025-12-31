@@ -262,7 +262,7 @@ export default function HackPage() {
       {/* ================= 右メインコンテンツ (スクロール可) ================= */}
       <main className="flex-1 overflow-y-auto p-6 relative">
           <h1 className="text-3xl font-bold mb-6 border-b border-green-800 pb-2 flex justify-between items-center">
-              <span>裏管理コンソール</span>
+              <span>ユーザー管理コンソール</span>
           </h1>
 
           {/* --- A. 特定ユーザー操作パネル (常時一番上に配置) --- */}
@@ -570,3 +570,5 @@ export default function HackPage() {
     </div>
   );
 }
+
+
