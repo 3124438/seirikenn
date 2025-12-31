@@ -24,10 +24,6 @@ export default function HackPage() {
   // 左側サイドバー検索用
   const [userSearchQuery, setUserSearchQuery] = useState("");
 
-  // リスト表示切り替え
-  const [showGuestWhite, setShowGuestWhite] = useState(false);
-  const [showStudentWhite, setShowStudentWhite] = useState(false);
-
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
@@ -125,10 +121,40 @@ export default function HackPage() {
       fetchStudentData();
   };
 
-  const handleListUpdate = async (type: "guest" | "student", listType: "white" | "black", userId: string) => {
-      if (!userId || !selectedConfigShopId) return;
-      const targetField = type === "guest" ? (listType === "white" ? "userAllowedUsers" : "userBannedUsers") : (listType === "white" ? "adminAllowedUsers" : "adminBannedUsers");
-      const oppositeField = type === "guest" ? (listType === "white" ? "userBannedUsers" : "userAllowedUsers") : (listType === "white" ? "adminBannedUsers" : "adminAllowedUsers");
+  // --- リストモード切替 (重要修正: DBのフラグを更新) ---
+  const toggleListMode = async (type: "guest" | "student") => {
+      if (!selectedConfigShopId || !targetShop) return;
+      
+      // guestListType または studentListType というフィールドで管理 ("white" or "black")
+      const field = type === "guest" ? "guestListType" : "studentListType";
+      const currentMode = targetShop[field] === "white" ? "white" : "black";
+      const newMode = currentMode === "white" ? "black" : "white";
+
+      const label = type === "guest" ? "一般客" : "運営生徒";
+      if (!confirm(`${label}の設定を「${newMode === "white" ? "ホワイトリスト(許可制)" : "ブラックリスト(拒否制)"}」に変更しますか？\n\n※設定は即座に反映されます。`)) return;
+
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), {
+          [field]: newMode
+      });
+  };
+
+  // --- リストへの追加/削除 ---
+  const handleListUpdate = async (type: "guest" | "student", userId: string) => {
+      if (!userId || !selectedConfigShopId || !targetShop) return;
+      
+      // 現在のモードを取得
+      const isWhite = (type === "guest" ? targetShop.guestListType : targetShop.studentListType) === "white";
+
+      // モードに合わせて追加すべき配列を決める
+      // Whiteモードなら -> AllowedUsersに追加, BannedUsersから削除
+      // Blackモードなら -> BannedUsersに追加, AllowedUsersから削除
+      const targetField = type === "guest" 
+          ? (isWhite ? "userAllowedUsers" : "userBannedUsers")
+          : (isWhite ? "adminAllowedUsers" : "adminBannedUsers");
+      
+      const oppositeField = type === "guest"
+          ? (isWhite ? "userBannedUsers" : "userAllowedUsers")
+          : (isWhite ? "adminBannedUsers" : "adminAllowedUsers");
 
       try {
           await updateDoc(doc(db, "attractions", selectedConfigShopId), {
@@ -146,6 +172,11 @@ export default function HackPage() {
   };
 
   const targetShop = attractions.find(s => s.id === selectedConfigShopId);
+  
+  // ターゲットショップの現在のモード判定 (DB値依存)
+  const isGuestWhite = targetShop?.guestListType === "white";
+  const isStudentWhite = targetShop?.studentListType === "white";
+
   const targetShopTimes = useMemo(() => {
       const shop = attractions.find(s => s.id === addShopId);
       if (!shop || !shop.slots) return [];
@@ -195,13 +226,13 @@ export default function HackPage() {
       {/* ================= 右メインコンテンツ (スクロール可) ================= */}
       <main className="flex-1 overflow-y-auto p-6 relative">
           <h1 className="text-3xl font-bold mb-6 border-b border-green-800 pb-2 flex justify-between items-center">
-              <span>裏管理コンソール</span>
+              <span>裏管理コンソール v11.1 <span className="text-xs bg-green-900 text-white px-2 rounded">DB連動版</span></span>
           </h1>
 
           {/* --- A. 特定ユーザー操作パネル (常時一番上に配置) --- */}
           <section className="mb-10 bg-blue-900/10 border border-blue-800 rounded p-6 shadow-lg shadow-blue-900/20">
               <h2 className="text-xl font-bold text-blue-400 mb-4 flex items-center gap-2">
-                  <span>特定ユーザー操作</span>
+                  <span>💀 特定ユーザー操作</span>
                   <span className="text-xs text-gray-400 font-normal">（左のリストから選択するとIDが入ります）</span>
               </h2>
               <div className="flex gap-4 items-stretch">
@@ -248,7 +279,7 @@ export default function HackPage() {
                 className={`w-full py-4 px-6 rounded text-left flex justify-between items-center transition
                     ${showVenueConfig ? 'bg-gray-800 text-white' : 'bg-gray-900 hover:bg-gray-800 text-green-400 border border-green-900'}`}
               >
-                  <span className="text-xl font-bold">🛠️ 会場設定 (ブラックリスト/停止管理)</span>
+                  <span className="text-xl font-bold">🛠️ 会場設定 (ブラックリスト/ホワイトリスト/停止管理)</span>
                   <span className="text-sm">{showVenueConfig ? "▲ 閉じる" : "▼ 開く"}</span>
               </button>
 
@@ -261,14 +292,24 @@ export default function HackPage() {
                                   <button 
                                     key={shop.id}
                                     onClick={() => setSelectedConfigShopId(shop.id)}
-                                    className={`p-5 rounded border text-left hover:bg-gray-800 transition shadow-lg
+                                    className={`p-5 rounded border text-left hover:bg-gray-800 transition shadow-lg relative overflow-hidden
                                         ${shop.isPaused ? 'border-red-500 bg-red-900/20' : 'border-gray-600 bg-black'}`}
                                   >
-                                      <div className="flex justify-between items-start mb-2">
+                                      <div className="flex justify-between items-start mb-2 relative z-10">
                                           <span className="text-2xl font-mono text-yellow-500">{shop.id}</span>
                                           {shop.isPaused && <span className="bg-red-600 text-white text-[10px] px-2 py-1 rounded">停止中</span>}
                                       </div>
-                                      <span className="text-lg font-bold text-white block">{shop.name}</span>
+                                      <span className="text-lg font-bold text-white block relative z-10">{shop.name}</span>
+                                      
+                                      {/* モードインジケーター */}
+                                      <div className="mt-2 flex gap-2 text-[10px] relative z-10">
+                                          <span className={`px-1 rounded ${shop.guestListType === 'white' ? 'bg-white text-black' : 'bg-gray-700 text-gray-300'}`}>
+                                              客: {shop.guestListType === 'white' ? 'White' : 'Black'}
+                                          </span>
+                                          <span className={`px-1 rounded ${shop.studentListType === 'white' ? 'bg-blue-200 text-blue-900' : 'bg-purple-900 text-purple-200'}`}>
+                                              生: {shop.studentListType === 'white' ? 'White' : 'Black'}
+                                          </span>
+                                      </div>
                                   </button>
                               ))}
                           </div>
@@ -280,7 +321,7 @@ export default function HackPage() {
                                   <h2 className="text-2xl font-bold text-white"><span className="text-yellow-400 font-mono">{targetShop.id}</span> {targetShop.name}</h2>
                               </div>
 
-                              {/* 受付スイッチ */}
+                              {/* 1. 受付スイッチ */}
                               <div className="flex items-center justify-between bg-black p-4 rounded border border-gray-600 mb-8">
                                   <div>
                                       <h3 className="font-bold text-white">受付ステータス</h3>
@@ -294,9 +335,9 @@ export default function HackPage() {
                                   </button>
                               </div>
 
-                              {/* リスト管理 */}
+                              {/* 共通: ID入力欄 */}
                               <div className="mb-4">
-                                  <label className="text-xs text-gray-500 block mb-1">リストに追加するID (左サイドバーで選択可)</label>
+                                  <label className="text-xs text-gray-500 block mb-1">リストに追加するID (左サイドバーで選択すると自動入力)</label>
                                   <input 
                                     className="w-full bg-black text-white border border-green-500 p-2 rounded"
                                     placeholder="IDを入力..."
@@ -306,57 +347,101 @@ export default function HackPage() {
                               </div>
 
                               <div className="grid md:grid-cols-2 gap-6">
-                                  {/* 客設定 */}
-                                  <div className={`p-4 rounded border ${showGuestWhite ? 'border-white bg-gray-800' : 'border-gray-600 bg-black'}`}>
+                                  
+                                  {/* 2. 客設定 (Guests) */}
+                                  <div className={`p-4 rounded border transition-colors duration-300 ${isGuestWhite ? 'border-white bg-gray-800' : 'border-gray-600 bg-black'}`}>
                                       <div className="flex justify-between items-center mb-2">
-                                          <h3 className="font-bold">一般客設定</h3>
-                                          <button onClick={() => setShowGuestWhite(!showGuestWhite)} className="text-xs underline text-gray-400">
-                                              {showGuestWhite ? "→ ブラックリストへ" : "→ ホワイトリストへ"}
-                                          </button>
+                                          <h3 className="font-bold">👽 一般客設定</h3>
+                                          <div className="flex items-center gap-2">
+                                              <span className={`text-[10px] px-2 py-0.5 rounded ${isGuestWhite ? 'bg-white text-black' : 'bg-gray-700 text-gray-400'}`}>
+                                                  {isGuestWhite ? "Whitebox Mode" : "Blackbox Mode"}
+                                              </span>
+                                              <button 
+                                                onClick={() => toggleListMode("guest")} 
+                                                className="text-xs underline text-green-400 hover:text-white"
+                                              >
+                                                  モード切替
+                                              </button>
+                                          </div>
                                       </div>
-                                      <p className="text-xs mb-4 text-gray-400">{showGuestWhite ? "ここに登録されたIDのみ予約可能" : "ここに登録されたIDは予約不可"}</p>
+                                      <p className="text-xs mb-4 text-gray-400 min-h-[32px]">
+                                          {isGuestWhite 
+                                            ? "【許可制】リストにあるIDのみ予約できます。（他は全員拒否）" 
+                                            : "【拒否制】リストにあるIDは予約できません。（他は全員許可）"}
+                                      </p>
                                       
                                       <button 
-                                        onClick={() => handleListUpdate("guest", showGuestWhite ? "white" : "black", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-4 ${showGuestWhite ? 'bg-white text-black' : 'bg-gray-700 text-white'}`}
+                                        onClick={() => handleListUpdate("guest", configInputUserId)}
+                                        className={`w-full py-2 rounded font-bold mb-4 transition ${isGuestWhite ? 'bg-white text-black hover:bg-gray-200' : 'bg-gray-700 text-white hover:bg-gray-600'}`}
                                       >
-                                          {showGuestWhite ? "ホワイトリストに追加" : "ブラックリストに追加"}
+                                          {isGuestWhite ? "ホワイトリストに追加 (許可)" : "ブラックリストに追加 (拒否)"}
                                       </button>
-                                      <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.map((uid: string) => (
-                                              <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
-                                                  <span>{uid}</span>
-                                                  <button onClick={() => handleRemoveFromList(showGuestWhite ? "userAllowedUsers" : "userBannedUsers", uid)} className="text-red-500 hover:text-red-300">削除</button>
-                                              </li>
-                                          ))}
-                                      </ul>
+
+                                      <div className="bg-black/30 p-2 rounded max-h-40 overflow-y-auto custom-scrollbar">
+                                          <h4 className="text-xs font-bold text-gray-500 mb-2 border-b border-gray-700 pb-1">
+                                              {isGuestWhite ? "許可リスト (Allowed)" : "拒否リスト (Banned)"}
+                                          </h4>
+                                          <ul className="text-sm space-y-1">
+                                              {(isGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.map((uid: string) => (
+                                                  <li key={uid} className="flex justify-between border-b border-gray-800 py-1">
+                                                      <span>{uid}</span>
+                                                      <button onClick={() => handleRemoveFromList(isGuestWhite ? "userAllowedUsers" : "userBannedUsers", uid)} className="text-red-500 hover:text-red-300">×</button>
+                                                  </li>
+                                              ))}
+                                              {(!(isGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.length) && (
+                                                  <li className="text-gray-600 text-xs italic">リストは空です</li>
+                                              )}
+                                          </ul>
+                                      </div>
                                   </div>
 
-                                  {/* 生徒設定 */}
-                                  <div className={`p-4 rounded border ${showStudentWhite ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
+                                  {/* 3. 生徒設定 (Students) */}
+                                  <div className={`p-4 rounded border transition-colors duration-300 ${isStudentWhite ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
                                       <div className="flex justify-between items-center mb-2">
-                                          <h3 className="font-bold text-blue-300">運営生徒設定</h3>
-                                          <button onClick={() => setShowStudentWhite(!showStudentWhite)} className="text-xs underline text-gray-400">
-                                              {showStudentWhite ? "→ ブラックリストへ" : "→ ホワイトリストへ"}
-                                          </button>
+                                          <h3 className="font-bold text-blue-300">🎓 運営生徒設定</h3>
+                                          <div className="flex items-center gap-2">
+                                              <span className={`text-[10px] px-2 py-0.5 rounded ${isStudentWhite ? 'bg-blue-500 text-white' : 'bg-purple-900 text-purple-300'}`}>
+                                                  {isStudentWhite ? "Whitebox Mode" : "Blackbox Mode"}
+                                              </span>
+                                              <button 
+                                                onClick={() => toggleListMode("student")} 
+                                                className="text-xs underline text-green-400 hover:text-white"
+                                              >
+                                                  モード切替
+                                              </button>
+                                          </div>
                                       </div>
-                                      <p className="text-xs mb-4 text-gray-400">{showStudentWhite ? "ここに登録されたIDのみ管理可" : "ここに登録されたIDは管理不可"}</p>
+                                      <p className="text-xs mb-4 text-gray-400 min-h-[32px]">
+                                          {isStudentWhite 
+                                            ? "【許可制】リストにあるIDのみ管理画面に入れます。" 
+                                            : "【拒否制】リストにあるIDは管理画面に入れません。"}
+                                      </p>
 
                                       <button 
-                                        onClick={() => handleListUpdate("student", showStudentWhite ? "white" : "black", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-4 ${showStudentWhite ? 'bg-blue-600 text-white' : 'bg-purple-800 text-white'}`}
+                                        onClick={() => handleListUpdate("student", configInputUserId)}
+                                        className={`w-full py-2 rounded font-bold mb-4 transition ${isStudentWhite ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-purple-800 text-white hover:bg-purple-700'}`}
                                       >
-                                          {showStudentWhite ? "ホワイトリストに追加" : "ブラックリストに追加"}
+                                          {isStudentWhite ? "ホワイトリストに追加 (許可)" : "ブラックリストに追加 (拒否)"}
                                       </button>
-                                      <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
-                                              <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
-                                                  <span>{uid}</span>
-                                                  <button onClick={() => handleRemoveFromList(showStudentWhite ? "adminAllowedUsers" : "adminBannedUsers", uid)} className="text-red-500 hover:text-red-300">削除</button>
-                                              </li>
-                                          ))}
-                                      </ul>
+                                      
+                                      <div className="bg-black/30 p-2 rounded max-h-40 overflow-y-auto custom-scrollbar">
+                                          <h4 className="text-xs font-bold text-gray-500 mb-2 border-b border-gray-700 pb-1">
+                                              {isStudentWhite ? "許可リスト (Allowed)" : "拒否リスト (Banned)"}
+                                          </h4>
+                                          <ul className="text-sm space-y-1">
+                                              {(isStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
+                                                  <li key={uid} className="flex justify-between border-b border-gray-800 py-1">
+                                                      <span>{uid}</span>
+                                                      <button onClick={() => handleRemoveFromList(isStudentWhite ? "adminAllowedUsers" : "adminBannedUsers", uid)} className="text-red-500 hover:text-red-300">×</button>
+                                                  </li>
+                                              ))}
+                                              {(!(isStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.length) && (
+                                                  <li className="text-gray-600 text-xs italic">リストは空です</li>
+                                              )}
+                                          </ul>
+                                      </div>
                                   </div>
+
                               </div>
                           </div>
                       )}
@@ -431,4 +516,3 @@ export default function HackPage() {
     </div>
   );
 }
-
