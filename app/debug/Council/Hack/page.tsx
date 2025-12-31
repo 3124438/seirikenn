@@ -54,10 +54,11 @@ export default function HackPage() {
       const ids = new Set<string>();
       attractions.forEach(shop => {
           shop.reservations?.forEach((res: any) => { if (res.userId) ids.add(res.userId); });
-          shop.adminAllowedUsers?.forEach((id: string) => ids.add(id));
-          shop.adminBannedUsers?.forEach((id: string) => ids.add(id));
-          shop.userAllowedUsers?.forEach((id: string) => ids.add(id));
-          shop.userBannedUsers?.forEach((id: string) => ids.add(id));
+          // ★修正: フィールド名を統一
+          shop.allowedUsers?.forEach((id: string) => ids.add(id));     // ゲスト許可
+          shop.bannedUsers?.forEach((id: string) => ids.add(id));      // ゲスト拒否
+          shop.adminAllowedUsers?.forEach((id: string) => ids.add(id)); // 生徒許可
+          shop.adminBannedUsers?.forEach((id: string) => ids.add(id));  // 生徒拒否
       });
       return Array.from(ids).sort();
   }, [attractions]);
@@ -93,15 +94,20 @@ export default function HackPage() {
       if(!targetShop) return;
       
       const field = type === "guest" ? "guestListType" : "studentListType";
-      // undefinedの場合は "black" 扱いなので、次は "white" になる
+      // 招待制フラグ(isRestricted)も連動させる必要がある場合はここで制御可能ですが、
+      // 今回はリストタイプの切り替えのみを行います
       const currentMode = targetShop[field] === "white" ? "white" : "black";
       const newMode = currentMode === "white" ? "black" : "white";
 
       if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト(許可制)" : "ブラックリスト(拒否制)"}」に変更しますか？\n\n※ホワイトリストにすると、登録されていない人は一切操作できなくなります。`)) return;
 
-      await updateDoc(doc(db, "attractions", selectedConfigShopId), {
-          [field]: newMode
-      });
+      // ★修正: ゲスト設定の場合は、予約画面で使われている `isRestricted` フラグも更新してあげるのが親切
+      const updates: any = { [field]: newMode };
+      if (type === "guest") {
+          updates.isRestricted = (newMode === "white");
+      }
+
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), updates);
       
       // UIも即座に同期
       if(type === "guest") setShowGuestWhite(newMode === "white");
@@ -114,7 +120,8 @@ export default function HackPage() {
       const targetShop = attractions.find(s => s.id === selectedConfigShopId);
       if(!targetShop) return;
       
-      const field = type === "guest" ? "userAllowedUsers" : "adminAllowedUsers";
+      // ★修正: フィールド名を統一 (allowedUsers)
+      const field = type === "guest" ? "allowedUsers" : "adminAllowedUsers";
       const currentList = targetShop[field] || [];
       const idsToAdd = allUserIds.filter(id => !currentList.includes(id));
 
@@ -136,12 +143,13 @@ export default function HackPage() {
       const targetShop = attractions.find(s => s.id === selectedConfigShopId);
       if(!targetShop) return;
 
-      // 現在UIで表示しているリスト（White/Black）に対して操作を行う
-      // showGuestWhite が true なら AllowedUsers を操作、false なら BannedUsers を操作
       const isUiWhite = type === "guest" ? showGuestWhite : showStudentWhite;
       
+      // ★修正: フィールド名を予約画面(Home)と統一
+      // ゲスト用: bannedUsers / allowedUsers
+      // 生徒用: adminBannedUsers / adminAllowedUsers
       const targetField = type === "guest" 
-          ? (isUiWhite ? "userAllowedUsers" : "userBannedUsers")
+          ? (isUiWhite ? "allowedUsers" : "bannedUsers")
           : (isUiWhite ? "adminAllowedUsers" : "adminBannedUsers");
 
       try {
@@ -183,7 +191,7 @@ export default function HackPage() {
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 1) - 1) };
       await updateDoc(doc(db, "attractions", res.shopId), { reservations: otherRes, slots: updatedSlots });
-      setIsModalOpen(false); // 状態が変わるため一旦閉じる（または再度fetchStudentDataを呼ぶ）
+      setIsModalOpen(false); 
       fetchStudentData();
   };
 
@@ -329,7 +337,8 @@ export default function HackPage() {
                                       </div>
                                       <span className="text-lg font-bold text-white block">{shop.name}</span>
                                       <div className="mt-2 text-[10px] text-gray-400 flex gap-2">
-                                          <span>客: {shop.guestListType === 'white' ? '許可制' : '拒否制(全員OK)'}</span>
+                                          {/* ★修正: 予約画面(Home)と連動させるため、isRestricted の状態も考慮して表示 */}
+                                          <span>客: {shop.guestListType === 'white' || shop.isRestricted ? '許可制' : '拒否制(全員OK)'}</span>
                                           <span>生: {shop.studentListType === 'white' ? '許可制' : '拒否制(全員OK)'}</span>
                                       </div>
                                   </button>
@@ -385,7 +394,7 @@ export default function HackPage() {
                                       </div>
                                       <p className="text-xs mb-4 text-gray-400">
                                           {showGuestWhite 
-                                            ? "※ リストにいる人だけが予約できます" 
+                                            ? "※ リストにいる人だけが予約できます (isRestricted: ON)" 
                                             : "※ 基本全員OK (リストの人だけ拒否)"}
                                       </p>
                                       
@@ -407,14 +416,15 @@ export default function HackPage() {
                                       )}
 
                                       <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.map((uid: string) => (
+                                          {/* ★修正: 表示リストも allowedUsers / bannedUsers に変更 */}
+                                          {(showGuestWhite ? targetShop.allowedUsers : targetShop.bannedUsers)?.map((uid: string) => (
                                               <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
                                                   <span>{uid}</span>
                                                   <button onClick={() => handleListUpdate("guest", "remove", uid)} className="text-red-500 hover:text-red-300">削除</button>
                                               </li>
                                           ))}
                                           <li className="text-[10px] text-right text-gray-500 mt-2">
-                                              {(showGuestWhite ? targetShop.userAllowedUsers : targetShop.userBannedUsers)?.length || 0}人 登録中
+                                              {(showGuestWhite ? targetShop.allowedUsers : targetShop.bannedUsers)?.length || 0}人 登録中
                                           </li>
                                       </ul>
                                   </div>
