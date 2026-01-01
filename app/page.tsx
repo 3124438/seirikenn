@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../firebase";
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc } from "firebase/firestore";
+// ★ setDoc, serverTimestamp を追加
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 type Ticket = { 
@@ -17,6 +18,8 @@ export default function Home() {
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
   const [selectedShop, setSelectedShop] = useState<any | null>(null);
   const [userId, setUserId] = useState("");
+  // ★ BAN状態管理用のステート
+  const [isBanned, setIsBanned] = useState(false);
 
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
@@ -29,17 +32,36 @@ export default function Home() {
     }
     setUserId(storedId);
 
-    // 2. BANチェック (システム全体)
-    const unsubBan = onSnapshot(doc(db, "system", "blacklist"), (docSnap) => {
-      if (docSnap.exists()) {
-        const bannedList = docSnap.data().ids || [];
-        if (bannedList.includes(storedId)) { 
-           document.body.innerHTML = "<div style='color:red; text-align:center; margin-top:50px; font-weight:bold; font-family:sans-serif;'>ACCESS DENIED<br>利用停止処分中です</div>";
+    // ============================================================
+    // ★ 追加機能: ユーザーDBへの自動保存 & BAN監視
+    // ============================================================
+    const userDocRef = doc(db, "users", storedId);
+
+    // A. 初回チェック: DBになければ作成 (ID保存)
+    getDoc(userDocRef).then((snap) => {
+        if (!snap.exists()) {
+            setDoc(userDocRef, {
+                userId: storedId,
+                createdAt: serverTimestamp(),
+                nickname: "",      // 管理者が後で編集可能
+                isPinned: false,   // ピン留め用
+                isBanned: false    // 垢バンフラグ
+            }).catch(err => console.error("User regist error:", err));
         }
-      }
     });
 
-    // 3. データのリアルタイム取得
+    // B. リアルタイム監視: BANされているかチェック
+    const unsubUser = onSnapshot(userDocRef, (snap) => {
+        if (snap.exists()) {
+            const data = snap.data();
+            // 管理画面で isBanned が true になると即座に反映
+            setIsBanned(data.isBanned === true);
+        }
+    });
+    // ============================================================
+
+
+    // 3. データのリアルタイム取得 (Attractions)
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(data);
@@ -65,16 +87,33 @@ export default function Home() {
     });
 
     return () => {
-        unsubBan();
-        unsubAttractions();
+        unsubUser();        // ユーザー監視解除
+        unsubAttractions(); // 会場監視解除
     };
   }, []);
 
   const activeTickets = myTickets.filter(t => t.status === "reserved");
   const usedTickets = myTickets.filter(t => t.status === "used");
 
+  // ============================================================
+  // ★ BANされている場合の表示 (操作を完全にブロック)
+  // ============================================================
+  if (isBanned) {
+      return (
+          <div className="min-h-screen bg-red-900 text-white flex flex-col items-center justify-center p-4 text-center">
+              <div className="text-6xl mb-4">🚫</div>
+              <h1 className="text-3xl font-bold mb-2">ACCESS DENIED</h1>
+              <p className="font-bold text-lg mb-4">利用停止処分が適用されています</p>
+              <p className="text-sm opacity-80">
+                  あなたのID ({userId}) は管理者により操作が制限されています。<br/>
+                  誤りだと思われる場合は実行委員会へお問い合わせください。
+              </p>
+          </div>
+      );
+  }
+
   const handleBook = async (shop: any, time: string) => {
-    // --- 追加: 店舗ごとの制限チェック ---
+    // --- 店舗ごとの制限チェック ---
     
     // 1. 店舗別BANチェック
     if (shop.bannedUsers && shop.bannedUsers.includes(userId)) {
@@ -184,7 +223,6 @@ export default function Home() {
             <div key={t.timestamp} className="bg-white border-l-4 border-green-500 p-4 rounded shadow-lg relative overflow-hidden">
               <div className="flex justify-between items-center mb-3">
                 <div>
-                    {/* ★ IDを追加 */}
                     <h2 className="font-bold text-lg flex items-center">
                         <span className="text-blue-600 font-mono mr-2 text-xl">{t.shopId}</span>
                         {t.shopName}
@@ -213,7 +251,6 @@ export default function Home() {
             <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-4 rounded-xl shadow-sm border text-left flex justify-between items-center hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
               <div>
                   <span className="font-bold text-lg flex items-center gap-2">
-                      {/* ★ IDを追加 */}
                       <span className="text-yellow-600 font-mono font-bold text-xl">{shop.id}</span>
                       {shop.name}
                       {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
@@ -229,7 +266,6 @@ export default function Home() {
         <div>
           <button onClick={() => setSelectedShop(null)} className="mb-4 text-sm text-gray-500 flex items-center gap-1">← もどる</button>
           <h2 className="text-2xl font-bold mb-1 flex items-center gap-2">
-              {/* ★ IDを追加 */}
               <span className="text-yellow-600 font-mono">{selectedShop.id}</span>
               {selectedShop.name}
               {selectedShop.isRestricted && <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded">招待制モード中</span>}
@@ -271,7 +307,6 @@ export default function Home() {
                     {usedTickets.map((t) => (
                         <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
                             <div>
-                                {/* ★ IDを追加 */}
                                 <h2 className="font-bold text-sm text-gray-600 flex items-center">
                                     <span className="text-gray-400 font-mono mr-2">{t.shopId}</span>
                                     {t.shopName}
