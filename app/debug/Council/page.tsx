@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整 (app/debug/Council/page.tsx)
 import { db, auth } from "../../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 export default function SuperAdminPage() {
@@ -36,6 +36,81 @@ export default function SuperAdminPage() {
     });
     return () => unsub();
   }, []);
+
+  // --- 統計データの計算 (Memo化) ---
+  const stats = useMemo(() => {
+      const totalVenues = attractions.length;
+      const pausedVenues = attractions.filter(a => a.isPaused).length;
+      // 全会場の reservations 配列の長さの合計
+      const totalReservations = attractions.reduce((sum, shop) => sum + (shop.reservations?.length || 0), 0);
+
+      return {
+          totalVenues: String(totalVenues).padStart(3, '0'),
+          pausedVenues: String(pausedVenues).padStart(3, '0'),
+          totalReservations: String(totalReservations).padStart(5, '0'),
+      };
+  }, [attractions]);
+
+  // --- 一斉操作機能 ---
+  const handleBulkPause = async (shouldPause: boolean) => {
+      const actionName = shouldPause ? "一斉停止" : "一斉再開";
+      if(!confirm(`全ての会場を「${actionName}」しますか？`)) return;
+
+      try {
+          // Firestoreの書き込み制限を考慮し、mapで並列処理
+          const promises = attractions.map(shop => 
+              updateDoc(doc(db, "attractions", shop.id), { isPaused: shouldPause })
+          );
+          await Promise.all(promises);
+          alert(`${actionName}が完了しました。`);
+      } catch(e) {
+          console.error(e);
+          alert("エラーが発生しました。");
+      }
+  };
+
+  const handleBulkDeleteReservations = async () => {
+      if(!confirm("【危険】全会場の「予約データ」を全て削除し、予約枠をリセットします。\n本当によろしいですか？")) return;
+      const confirmPass = prompt("確認のため 'DELETE' と入力してください");
+      if(confirmPass !== "DELETE") return;
+
+      try {
+          const promises = attractions.map(shop => {
+              // スロットのカウントを全て0に戻すオブジェクトを作成
+              const resetSlots: any = {};
+              Object.keys(shop.slots || {}).forEach(key => {
+                  resetSlots[key] = 0;
+              });
+              
+              return updateDoc(doc(db, "attractions", shop.id), {
+                  reservations: [],
+                  slots: resetSlots
+              });
+          });
+          await Promise.all(promises);
+          alert("全予約データの削除と枠のリセットが完了しました。");
+      } catch(e) {
+          console.error(e);
+          alert("エラーが発生しました。");
+      }
+  };
+
+  const handleBulkDeleteVenues = async () => {
+      if(!confirm("【超危険】全ての「会場データ」そのものを削除します。\n復元できません。本当によろしいですか？")) return;
+      const confirmPass = prompt("本気で削除する場合は 'DESTROY' と入力してください");
+      if(confirmPass !== "DESTROY") return;
+
+      try {
+          const promises = attractions.map(shop => deleteDoc(doc(db, "attractions", shop.id)));
+          await Promise.all(promises);
+          setExpandedShopId(null);
+          alert("全ての会場を削除しました。");
+      } catch(e) {
+          console.error(e);
+          alert("エラーが発生しました。");
+      }
+  };
+
 
   // --- 編集・作成関連 ---
   const resetForm = () => {
@@ -192,7 +267,6 @@ export default function SuperAdminPage() {
             <div className="mt-4 pt-4 border-t border-gray-700">
                 <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${originalId} を編集中` : "新規作成"}</h3>
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    {/* ID入力欄: disabled を削除しました */}
                     <input 
                         className={`p-2 rounded text-white bg-gray-700 ${isEditing && manualId !== originalId ? 'ring-2 ring-yellow-500' : ''}`}
                         placeholder="ID (例: 3B)" 
@@ -200,11 +274,9 @@ export default function SuperAdminPage() {
                         value={manualId} 
                         onChange={e => setManualId(e.target.value)} 
                     />
-                    
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
                 </div>
-                {/* ID変更時の警告メッセージ */}
                 {isEditing && manualId !== originalId && (
                     <div className="text-xs text-yellow-400 font-bold mb-2">
                         ⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。
@@ -231,7 +303,8 @@ export default function SuperAdminPage() {
             </div>
         </details>
 
-        <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600">
+        {/* 検索バー */}
+        <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600 mb-6">
             <span className="text-xl">🔍</span>
             <input 
                 className="flex-1 bg-transparent text-white outline-none" 
@@ -240,6 +313,44 @@ export default function SuperAdminPage() {
                 onChange={e => setSearchUserId(e.target.value)} 
             />
         </div>
+
+        {/* ★ 一斉操作 & ダッシュボードパネル (NEW) */}
+        <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
+             <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
+             
+             {/* カウンター表示 */}
+             <div className="flex justify-between items-center mb-6 bg-gray-900 p-4 rounded-lg border border-gray-800">
+                <div className="text-center">
+                    <div className="text-xs text-gray-500 mb-1">TOTAL VENUES</div>
+                    <div className="text-3xl font-mono font-bold text-white tracking-widest">{stats.totalVenues}</div>
+                </div>
+                <div className="text-center border-l border-r border-gray-700 px-6">
+                    <div className="text-xs text-gray-500 mb-1">PAUSED SHOPS</div>
+                    <div className="text-3xl font-mono font-bold text-red-500 tracking-widest">{stats.pausedVenues}</div>
+                </div>
+                <div className="text-center">
+                    <div className="text-xs text-gray-500 mb-1">TOTAL RSV.</div>
+                    <div className="text-3xl font-mono font-bold text-green-500 tracking-widest">{stats.totalReservations}</div>
+                </div>
+             </div>
+
+             {/* 一斉操作ボタン群 */}
+             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                 <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">
+                    🛑 一斉停止
+                 </button>
+                 <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">
+                    ▶️ 一斉再開
+                 </button>
+                 <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">
+                    🗑️ 全予約削除
+                 </button>
+                 <button onClick={handleBulkDeleteVenues} className="bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 py-2 rounded text-xs font-bold transition">
+                    💀 会場全削除
+                 </button>
+             </div>
+        </div>
+
       </div>
 
       {!expandedShopId && (
