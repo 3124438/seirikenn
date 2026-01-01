@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整 (app/debug/Council/page.tsx)
 import { db, auth } from "../../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 export default function SuperAdminPage() {
@@ -41,13 +41,15 @@ export default function SuperAdminPage() {
   const stats = useMemo(() => {
       const totalVenues = attractions.length;
       const pausedVenues = attractions.filter(a => a.isPaused).length;
-      // 全会場の reservations 配列の長さの合計
+      
+      // 全会場の reservations 配列の長さの合計 (使用済みも含む)
       const totalReservations = attractions.reduce((sum, shop) => sum + (shop.reservations?.length || 0), 0);
 
       return {
           totalVenues: String(totalVenues).padStart(3, '0'),
           pausedVenues: String(pausedVenues).padStart(3, '0'),
-          totalReservations: String(totalReservations).padStart(5, '0'),
+          // ★修正: 7桁埋めに変更
+          totalReservations: String(totalReservations).padStart(7, '0'),
       };
   }, [attractions]);
 
@@ -57,7 +59,6 @@ export default function SuperAdminPage() {
       if(!confirm(`全ての会場を「${actionName}」しますか？`)) return;
 
       try {
-          // Firestoreの書き込み制限を考慮し、mapで並列処理
           const promises = attractions.map(shop => 
               updateDoc(doc(db, "attractions", shop.id), { isPaused: shouldPause })
           );
@@ -76,7 +77,6 @@ export default function SuperAdminPage() {
 
       try {
           const promises = attractions.map(shop => {
-              // スロットのカウントを全て0に戻すオブジェクトを作成
               const resetSlots: any = {};
               Object.keys(shop.slots || {}).forEach(key => {
                   resetSlots[key] = 0;
@@ -115,7 +115,7 @@ export default function SuperAdminPage() {
   // --- 編集・作成関連 ---
   const resetForm = () => {
     setIsEditing(false);
-    setOriginalId(null); // 元IDリセット
+    setOriginalId(null);
     setManualId(""); setNewName(""); setPassword("");
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
@@ -123,7 +123,7 @@ export default function SuperAdminPage() {
 
   const startEdit = (shop: any) => {
     setIsEditing(true);
-    setOriginalId(shop.id); // ★ 元のIDを記憶
+    setOriginalId(shop.id);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
@@ -135,7 +135,6 @@ export default function SuperAdminPage() {
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
     if (password.length !== 5) return alert("パスワードは5桁です");
 
-    // ID変更時の重複チェック
     if (isEditing && originalId !== manualId) {
         const exists = attractions.some(s => s.id === manualId);
         if (exists) return alert(`ID「${manualId}」は既に存在するため変更できません。別のIDにしてください。`);
@@ -143,16 +142,12 @@ export default function SuperAdminPage() {
 
     let slots = {};
     let shouldResetSlots = true;
-    let existingReservations = []; // 予約データを保持用
+    let existingReservations = [];
 
     if (isEditing) {
-        // 元のID（originalId）を使って現在のデータを取得
         const currentShop = attractions.find(s => s.id === originalId);
-        
         if (currentShop) {
-            existingReservations = currentShop.reservations || []; // 既存予約をキープ
-            
-            // 時間設定が変わっていないか確認
+            existingReservations = currentShop.reservations || [];
             if (currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
                 slots = currentShop.slots;
                 shouldResetSlots = false;
@@ -176,33 +171,24 @@ export default function SuperAdminPage() {
     const data: any = {
       name: newName, password, groupLimit,
       openTime, closeTime, duration, capacity, isPaused, slots,
-      reservations: existingReservations // ID変更しても予約を引き継ぐ
+      reservations: existingReservations
     };
 
     if (!isEditing) data.reservations = [];
 
     try {
         if (isEditing && originalId && manualId !== originalId) {
-            // ★ ID変更の場合の処理（重要）
             if(!confirm(`会場IDを「${originalId}」から「${manualId}」に変更しますか？\n(データは引き継がれます)`)) return;
-
-            // 1. 新しいIDでデータを作成
             await setDoc(doc(db, "attractions", manualId), data);
-            // 2. 古いIDのデータを削除
             await deleteDoc(doc(db, "attractions", originalId));
-            
             alert(`IDを変更して更新しました。\n${originalId} → ${manualId}`);
-            setExpandedShopId(manualId); // 表示中の詳細も新しいIDへ
-
+            setExpandedShopId(manualId);
         } else {
-            // 通常の更新（ID変更なし）または新規作成
             await setDoc(doc(db, "attractions", manualId), data, { merge: true });
             alert(isEditing ? "更新しました" : "作成しました");
             if(isEditing) setExpandedShopId(manualId);
         }
-        
         resetForm();
-
     } catch(e) {
         console.error(e);
         alert("エラーが発生しました");
@@ -218,25 +204,16 @@ export default function SuperAdminPage() {
   // --- 予約操作関連 ---
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
-
      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
      const updatedRes = { ...res, status: newStatus };
-
-     await updateDoc(doc(db, "attractions", shop.id), {
-         reservations: [...otherRes, updatedRes]
-     });
+     await updateDoc(doc(db, "attractions", shop.id), { reservations: [...otherRes, updatedRes] });
   };
 
   const cancelReservation = async (shop: any, res: any) => {
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
-
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
-
-      await updateDoc(doc(db, "attractions", shop.id), {
-          reservations: otherRes,
-          slots: updatedSlots
-      });
+      await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
 
   // --- 表示用ヘルパー ---
@@ -249,9 +226,7 @@ export default function SuperAdminPage() {
       });
       if(shop.reservations) {
           shop.reservations.forEach((res: any) => {
-              if(grouped[res.time]) {
-                  grouped[res.time].push(res);
-              }
+              if(grouped[res.time]) grouped[res.time].push(res);
           });
       }
       return grouped;
@@ -269,20 +244,14 @@ export default function SuperAdminPage() {
                 <div className="grid gap-2 md:grid-cols-3 mb-2">
                     <input 
                         className={`p-2 rounded text-white bg-gray-700 ${isEditing && manualId !== originalId ? 'ring-2 ring-yellow-500' : ''}`}
-                        placeholder="ID (例: 3B)" 
-                        maxLength={3} 
-                        value={manualId} 
-                        onChange={e => setManualId(e.target.value)} 
+                        placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} 
                     />
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                     <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
                 </div>
                 {isEditing && manualId !== originalId && (
-                    <div className="text-xs text-yellow-400 font-bold mb-2">
-                        ⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。
-                    </div>
+                    <div className="text-xs text-yellow-400 font-bold mb-2">⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。</div>
                 )}
-                
                 <div className="grid grid-cols-4 gap-2 mb-2">
                     <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
                     <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
@@ -303,18 +272,16 @@ export default function SuperAdminPage() {
             </div>
         </details>
 
-        {/* 検索バー */}
         <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600 mb-6">
             <span className="text-xl">🔍</span>
             <input 
                 className="flex-1 bg-transparent text-white outline-none" 
                 placeholder="ユーザーIDを入力して検索 (例: X9A2...)" 
-                value={searchUserId} 
-                onChange={e => setSearchUserId(e.target.value)} 
+                value={searchUserId} onChange={e => setSearchUserId(e.target.value)} 
             />
         </div>
 
-        {/* ★ 一斉操作 & ダッシュボードパネル (NEW) */}
+        {/* ★ 一斉操作 & ダッシュボードパネル */}
         <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
              <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
              
@@ -330,27 +297,18 @@ export default function SuperAdminPage() {
                 </div>
                 <div className="text-center">
                     <div className="text-xs text-gray-500 mb-1">TOTAL RSV.</div>
+                    {/* ★ 7桁表示に変更 */}
                     <div className="text-3xl font-mono font-bold text-green-500 tracking-widest">{stats.totalReservations}</div>
                 </div>
              </div>
 
-             {/* 一斉操作ボタン群 */}
              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                 <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">
-                    🛑 一斉停止
-                 </button>
-                 <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">
-                    ▶️ 一斉再開
-                 </button>
-                 <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">
-                    🗑️ 全予約削除
-                 </button>
-                 <button onClick={handleBulkDeleteVenues} className="bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 py-2 rounded text-xs font-bold transition">
-                    💀 会場全削除
-                 </button>
+                 <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">🛑 一斉停止</button>
+                 <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">▶️ 一斉再開</button>
+                 <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">🗑️ 全予約削除</button>
+                 <button onClick={handleBulkDeleteVenues} className="bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 py-2 rounded text-xs font-bold transition">💀 会場全削除</button>
              </div>
         </div>
-
       </div>
 
       {!expandedShopId && (
@@ -358,6 +316,10 @@ export default function SuperAdminPage() {
               {attractions.map(shop => {
                    const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                    
+                   // ★ 個別会場の予約数をカウント（使用済み含む）し、4桁埋め
+                   const totalShopRes = shop.reservations?.length || 0;
+                   const totalShopResDisplay = String(totalShopRes).padStart(4, '0');
+
                    return (
                       <button 
                         key={shop.id} 
@@ -369,7 +331,15 @@ export default function SuperAdminPage() {
                               <span className="font-bold text-lg">{shop.name}</span>
                               {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
                           </div>
-                          <div className="text-gray-400 text-2xl">›</div>
+                          
+                          {/* 右側の表示エリア（予約数 + 矢印） */}
+                          <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                  <span className="text-[10px] text-gray-500 block">TOTAL</span>
+                                  <span className="font-mono text-xl text-blue-400">{totalShopResDisplay}</span>
+                              </div>
+                              <div className="text-gray-400 text-2xl">›</div>
+                          </div>
                       </button>
                    );
               })}
@@ -378,9 +348,7 @@ export default function SuperAdminPage() {
 
       {expandedShopId && targetShop && (
           <div className="animate-fade-in">
-              <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">
-                  ← 会場一覧に戻る
-              </button>
+              <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">← 会場一覧に戻る</button>
 
               <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
                   <div className="bg-gray-700 p-4 flex justify-between items-center">
@@ -413,21 +381,14 @@ export default function SuperAdminPage() {
 
                                   <div className="space-y-2">
                                       {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
-                                      
                                       {reservations.map((res: any) => {
                                           const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
-                                          
                                           return (
                                               <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
                                                   <div>
-                                                      <div className="font-mono font-bold text-yellow-400">
-                                                          ID: {res.userId}
-                                                      </div>
-                                                      <div className="text-xs text-gray-300">
-                                                          {res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}
-                                                      </div>
+                                                      <div className="font-mono font-bold text-yellow-400">ID: {res.userId}</div>
+                                                      <div className="text-xs text-gray-300">{res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}</div>
                                                   </div>
-                                                  
                                                   <div className="flex gap-1">
                                                       {res.status !== 'used' ? (
                                                           <>
@@ -435,9 +396,7 @@ export default function SuperAdminPage() {
                                                               <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
                                                           </>
                                                       ) : (
-                                                          <>
-                                                              <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
-                                                          </>
+                                                          <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
                                                       )}
                                                   </div>
                                               </div>
