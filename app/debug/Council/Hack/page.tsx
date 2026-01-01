@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { db, auth } from "../../../../firebase"; // パスは環境に合わせて調整してください
-import { collection, onSnapshot, doc, updateDoc, setDoc, deleteDoc, getDoc, getDocs, arrayUnion, arrayRemove, serverTimestamp } from "firebase/firestore";
+import { db, auth } from "../../../../firebase"; 
+import { collection, onSnapshot, doc, updateDoc, setDoc, deleteDoc, getDoc, arrayUnion, arrayRemove, serverTimestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 type Tab = "venues" | "users";
@@ -37,7 +37,7 @@ export default function AdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
 
-    // A. ID生成と自己保存 (管理者が開いた場合もDBに保存)
+    // A. ID生成と自己保存
     const initUser = async () => {
         let stored = localStorage.getItem("bunkasai_user_id");
         if (!stored) {
@@ -49,15 +49,15 @@ export default function AdminPage() {
         }
         setMyUserId(stored);
 
-        // ★重要: DB(usersコレクション)に自分を保存
+        // ★DBに自分を保存
         const userRef = doc(db, "users", stored);
         const snap = await getDoc(userRef);
         if (!snap.exists()) {
             await setDoc(userRef, {
                 userId: stored,
                 createdAt: serverTimestamp(),
-                nickname: "管理者", // 初期値
-                isPinned: true,    // 管理者はピン留めしておく
+                nickname: "管理者", 
+                isPinned: true,    
                 isBanned: false,
             });
         }
@@ -69,7 +69,7 @@ export default function AdminPage() {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // C. ★ユーザーデータの監視 (DB管理用)
+    // C. ユーザーデータの監視
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
         setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -93,50 +93,50 @@ export default function AdminPage() {
 
 
   // =================================================================
+  //  ヘルパー関数
+  // =================================================================
+  
+  // IDからニックネームを取得する関数（見つからない場合は空文字）
+  const getUserNickname = (uid: string) => {
+      const u = users.find(user => user.id === uid);
+      return u && u.nickname ? u.nickname : "";
+  };
+
+  // =================================================================
   //  機能群 1: ユーザーDB管理 (New)
   // =================================================================
   
-  // ニックネーム更新
   const handleUpdateNickname = async (uid: string, newNick: string) => {
     await updateDoc(doc(db, "users", uid), { nickname: newNick });
   };
 
-  // ピン留め
   const togglePin = async (user: any) => {
     await updateDoc(doc(db, "users", user.id), { isPinned: !user.isPinned });
   };
 
-  // 垢バン (Ban)
   const toggleBan = async (user: any) => {
     const confirmMsg = user.isBanned 
       ? `ID「${user.id}」のBanを解除しますか？` 
-      : `ID「${user.id}」を垢バン(操作禁止)にしますか？\n※予約画面・管理画面の操作が一切できなくなります。`;
+      : `ID「${user.id}」を垢バン(操作禁止)にしますか？`;
     
     if (!confirm(confirmMsg)) return;
     await updateDoc(doc(db, "users", user.id), { isBanned: !user.isBanned });
   };
 
-  // 全データ抹消 (Wipe)
   const wipeUserData = async (targetUid: string) => {
     if (!confirm(`【危険】User ID: ${targetUid} の全予約データを強制削除します。\n枠を空けますか？`)) return;
-
-    // 全会場をスキャンして予約を削除
     let deletedCount = 0;
     for (const shop of attractions) {
         if (!shop.reservations) continue;
         const targetRes = shop.reservations.filter((r: any) => r.userId === targetUid);
-        
         if (targetRes.length > 0) {
             const newRes = shop.reservations.filter((r: any) => r.userId !== targetUid);
-            // スロット(枠)のカウントを戻す
             let newSlots = { ...shop.slots };
             targetRes.forEach((r: any) => {
                 if (newSlots[r.time] > 0) newSlots[r.time]--;
             });
-
             await updateDoc(doc(db, "attractions", shop.id), {
-                reservations: newRes,
-                slots: newSlots
+                reservations: newRes, slots: newSlots
             });
             deletedCount += targetRes.length;
         }
@@ -144,16 +144,17 @@ export default function AdminPage() {
     alert(`完了: ${deletedCount} 件の予約データを削除しました。`);
   };
 
-  // DBからユーザー削除
   const deleteUserFromDb = async (targetUid: string) => {
-    if(!confirm(`ユーザー「${targetUid}」をデータベースから完全に削除しますか？\n(予約データがある場合は別途「全データ削除」を行ってください)`)) return;
+    if(!confirm(`ユーザー「${targetUid}」をデータベースから完全に削除しますか？`)) return;
     await deleteDoc(doc(db, "users", targetUid));
   };
 
-  // DB用フィルタリング
+  // DB用フィルタリング (日本語対応)
   const filteredDbUsers = users.filter(u => {
-      const q = dbSearchQuery.toUpperCase();
-      return u.id.includes(q) || (u.nickname && u.nickname.toUpperCase().includes(q));
+      const q = dbSearchQuery.toLowerCase(); // 小文字化して検索
+      const idMatch = u.id.toLowerCase().includes(q);
+      const nickMatch = u.nickname && u.nickname.toLowerCase().includes(q);
+      return idMatch || nickMatch;
   }).sort((a, b) => {
       if (a.isPinned && !b.isPinned) return -1;
       if (!a.isPinned && b.isPinned) return 1;
@@ -162,10 +163,10 @@ export default function AdminPage() {
 
 
   // =================================================================
-  //  機能群 2: 会場管理・予約操作 (Existing)
+  //  機能群 2: 会場管理・予約操作
   // =================================================================
 
-  // サイドバー用ID抽出 (既存のロジック: 予約履歴などから抽出)
+  // サイドバー用ID抽出 (予約履歴などから抽出)
   const allUserIds = useMemo(() => {
       const ids = new Set<string>();
       attractions.forEach(shop => {
@@ -178,11 +179,18 @@ export default function AdminPage() {
       return Array.from(ids).sort();
   }, [attractions]);
 
+  // ★修正: サイドバーのフィルタリング (ニックネームも含めて検索)
   const filteredSidebarIds = useMemo(() => {
       if (!userSearchQuery) return allUserIds;
-      const q = userSearchQuery.toUpperCase();
-      return allUserIds.filter(id => id.toUpperCase().includes(q));
-  }, [allUserIds, userSearchQuery]);
+      const q = userSearchQuery.toLowerCase();
+      
+      return allUserIds.filter(id => {
+          const idMatch = id.toLowerCase().includes(q);
+          const nickname = getUserNickname(id);
+          const nickMatch = nickname.toLowerCase().includes(q);
+          return idMatch || nickMatch;
+      });
+  }, [allUserIds, userSearchQuery, users]); // usersへの依存を追加
 
   const selectUser = (id: string) => {
       setTargetStudentId(id);
@@ -206,7 +214,7 @@ export default function AdminPage() {
       if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト" : "ブラックリスト"}」に変更しますか？`)) return;
       
       const updates: any = { [field]: newMode };
-      if (type === "guest") updates.isRestricted = (newMode === "white"); // 予約画面用フラグも更新
+      if (type === "guest") updates.isRestricted = (newMode === "white");
       await updateDoc(doc(db, "attractions", selectedConfigShopId), updates);
   };
 
@@ -313,30 +321,44 @@ export default function AdminPage() {
 
 
       {/* ========================================================================= */}
-      {/* タブ 1: 会場・予約管理 (旧 HackPage)                                    */}
+      {/* タブ 1: 会場・予約管理 (サイドバー修正版)                                */}
       {/* ========================================================================= */}
       {activeTab === "venues" && (
         <div className="flex flex-1 overflow-hidden">
-            {/* 左サイドバー */}
+            {/* 左サイドバー (Active User Selector) */}
             <aside className="w-1/4 min-w-[250px] border-r border-green-900 flex flex-col bg-gray-900/50">
                 <div className="p-4 border-b border-green-900">
                     <h2 className="text-xs font-bold text-gray-400 mb-2 uppercase">Active User Selector</h2>
                     <input 
-                        className="w-full bg-black text-white border border-gray-600 p-2 text-sm rounded outline-none focus:border-green-500"
-                        placeholder="Search ID..."
+                        className="w-full bg-black text-white border border-gray-600 p-2 text-sm rounded outline-none focus:border-green-500 placeholder-gray-600"
+                        placeholder="ID or ニックネーム検索..."
                         value={userSearchQuery}
                         onChange={e => setUserSearchQuery(e.target.value)}
                     />
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    {filteredSidebarIds.map(id => (
-                        <button key={id} onClick={() => selectUser(id)}
-                            className={`w-full text-left text-sm p-3 border-b border-gray-800 hover:bg-green-900/30 flex justify-between
-                            ${(targetStudentId === id || configInputUserId === id) ? "bg-green-900/50 text-white border-l-4 border-l-green-500" : "text-gray-300"}`}
-                        >
-                            <span>{id}</span>
-                        </button>
-                    ))}
+                    {filteredSidebarIds.length === 0 && (
+                        <div className="p-4 text-center text-xs text-gray-600">見つかりません</div>
+                    )}
+                    {filteredSidebarIds.map(id => {
+                        const nickname = getUserNickname(id);
+                        return (
+                            <button key={id} onClick={() => selectUser(id)}
+                                className={`w-full text-left p-3 border-b border-gray-800 hover:bg-green-900/30 flex justify-between items-center group
+                                ${(targetStudentId === id || configInputUserId === id) ? "bg-green-900/50 border-l-4 border-l-green-500" : ""}`}
+                            >
+                                <div className="flex flex-col">
+                                    {/* ニックネームがあれば表示、なければ「名称未設定」 */}
+                                    <span className="font-bold text-white text-sm group-hover:text-green-300">
+                                        {nickname || <span className="text-gray-600 italic font-normal text-xs">(名称未設定)</span>}
+                                    </span>
+                                    {/* IDは少し小さく表示 */}
+                                    <span className="text-xs text-gray-500 font-mono group-hover:text-green-500">{id}</span>
+                                </div>
+                                {(targetStudentId === id) && <span className="text-green-500 text-xs">●</span>}
+                            </button>
+                        );
+                    })}
                 </div>
             </aside>
 
@@ -347,10 +369,16 @@ export default function AdminPage() {
                     <h2 className="text-lg font-bold text-blue-400 mb-4">特定ユーザー操作</h2>
                     <div className="flex gap-4">
                         <input className="flex-1 bg-black border border-blue-500 text-white p-3 rounded text-xl font-mono" 
-                            placeholder="ID未選択" value={targetStudentId} onChange={(e) => setTargetStudentId(e.target.value.toUpperCase())}
+                            placeholder="ID未選択 (左リストから選択)" value={targetStudentId} onChange={(e) => setTargetStudentId(e.target.value.toUpperCase())}
                         />
                         <button onClick={fetchStudentData} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 rounded">詳細・操作</button>
                     </div>
+                    {/* 選択中のユーザーのニックネームを表示 */}
+                    {targetStudentId && (
+                        <p className="mt-2 text-sm text-gray-400">
+                            Current Name: <span className="text-white font-bold">{getUserNickname(targetStudentId) || "なし"}</span>
+                        </p>
+                    )}
                 </section>
 
                 {/* 会場設定・緊急停止 */}
@@ -436,7 +464,7 @@ export default function AdminPage() {
 
 
       {/* ========================================================================= */}
-      {/* タブ 2: ユーザーデータベース管理 (New)                                  */}
+      {/* タブ 2: ユーザーデータベース管理 (日本語検索対応)                          */}
       {/* ========================================================================= */}
       {activeTab === "users" && (
           <div className="flex-1 overflow-y-auto p-6 bg-gray-900">
@@ -444,13 +472,9 @@ export default function AdminPage() {
                   <div className="bg-black border border-gray-700 rounded-xl overflow-hidden shadow-2xl">
                       <div className="p-6 border-b border-gray-800 bg-gray-900/50">
                           <h2 className="text-2xl font-bold text-white mb-2">User Database</h2>
-                          <p className="text-sm text-gray-400 mb-4">
-                              サイトを訪問した全ユーザーがここに記録されます。<br/>
-                              垢バンを行うと、そのユーザーは予約・管理画面へのアクセスが遮断されます。
-                          </p>
                           <input 
-                              className="w-full bg-black border border-gray-600 rounded p-3 text-white focus:border-blue-500 outline-none"
-                              placeholder="ユーザーID または ニックネームで検索..."
+                              className="w-full bg-black border border-gray-600 rounded p-3 text-white focus:border-blue-500 outline-none placeholder-gray-500"
+                              placeholder="ユーザーID または ニックネーム(日本語可)で検索..."
                               value={dbSearchQuery}
                               onChange={(e) => setDbSearchQuery(e.target.value)}
                           />
@@ -496,10 +520,10 @@ export default function AdminPage() {
                                               </button>
                                           </td>
                                           <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                              <button onClick={() => wipeUserData(user.id)} className="bg-orange-900/50 hover:bg-orange-700 text-orange-200 border border-orange-800 px-3 py-1 rounded text-xs" title="全予約データを削除">
+                                              <button onClick={() => wipeUserData(user.id)} className="bg-orange-900/50 hover:bg-orange-700 text-orange-200 border border-orange-800 px-3 py-1 rounded text-xs">
                                                   全データ削除
                                               </button>
-                                              <button onClick={() => deleteUserFromDb(user.id)} className="bg-gray-800 hover:bg-red-600 text-gray-400 hover:text-white px-3 py-1 rounded text-xs" title="DBから削除">
+                                              <button onClick={() => deleteUserFromDb(user.id)} className="bg-gray-800 hover:bg-red-600 text-gray-400 hover:text-white px-3 py-1 rounded text-xs">
                                                   🗑️
                                               </button>
                                           </td>
