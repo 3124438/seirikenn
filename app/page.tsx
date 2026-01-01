@@ -1,4 +1,3 @@
-
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../firebase";
@@ -324,7 +323,7 @@ export default function Home() {
         </div>
       )}
 
-      <div className="mt-8 text-center border-t pt-4"><a href="/debug" className="text-xs text-gray-300">/debug</a></div>
+      <div className="mt-8 text-center border-t pt-4"><a href="/debugG" className="text-xs text-gray-300">/debug</a></div>
     </div>
   );
 }
