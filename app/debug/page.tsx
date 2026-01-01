@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
+// ★追加: getDoc, serverTimestamp をインポートに追加
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, getDoc, serverTimestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 export default function AdminPage() {
@@ -31,11 +32,9 @@ export default function AdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
     
-    // --- ★ここを修正: IDの取得と生成ロジック ---
+    // --- 1. IDの取得と生成ロジック ---
     let stored = localStorage.getItem("bunkasai_user_id");
     
-    // もしローカルストレージにIDがなければ、ここで生成して保存する
-    // (予約画面と同じキー 'bunkasai_user_id' を使用することで同期されます)
     if (!stored) {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         let result = "";
@@ -47,7 +46,33 @@ export default function AdminPage() {
     }
     
     setMyUserId(stored);
-    // ------------------------------------------
+
+    // --- ★追加: データベースへのID自動保存・登録ロジック ---
+    // これにより、この画面を開いた人も裏管理システムのリストに載るようになります
+    const registerUserToDb = async (uid: string) => {
+        if (!uid) return;
+        const userRef = doc(db, "users", uid);
+        const snap = await getDoc(userRef);
+
+        // まだ存在しない場合のみ作成
+        if (!snap.exists()) {
+            await setDoc(userRef, {
+                userId: uid,
+                createdAt: serverTimestamp(),
+                nickname: "",       // 初期値
+                isPinned: false,    // 初期値
+                isBanned: false,    // 初期値
+            });
+        } else {
+            // 既に存在する場合、Banされているかチェック（操作させないため）
+            if (snap.data().isBanned) {
+                alert("⛔ あなたのアカウントは制限されています。操作を続行できません。");
+                // 必要であればここでリダイレクト処理などを入れる
+            }
+        }
+    };
+    registerUserToDb(stored);
+    // ----------------------------------------------------
 
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -106,7 +131,7 @@ export default function AdminPage() {
   };
 
   const handleSave = async () => {
-    // ★変更点: 新規作成（編集モードでない）なら弾く
+    // 新規作成（編集モードでない）なら弾く
     if (!isEditing) return alert("新規会場の作成は無効化されています。");
 
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
@@ -219,7 +244,7 @@ export default function AdminPage() {
         <div className="mb-6 border-b border-gray-700 pb-4">
             <h1 className="text-2xl font-bold text-white mb-4">生徒用管理画面</h1>
             
-            {/* ★変更点: 編集時のみフォームを表示、新規作成機能は非表示にする */}
+            {/* 編集時のみフォームを表示、新規作成機能は非表示にする */}
             {isEditing ? (
                 <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in shadow-lg shadow-blue-900/20">
                     <h3 className="text-sm font-bold mb-4 text-blue-300 flex items-center gap-2">
@@ -431,5 +456,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-
