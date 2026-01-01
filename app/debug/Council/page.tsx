@@ -8,6 +8,9 @@ import { signInAnonymously } from "firebase/auth";
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
   
+  // ★追加: 自分のID管理用
+  const [myUserId, setMyUserId] = useState("");
+
   // 表示モード管理
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
   const [isEditing, setIsEditing] = useState(false);
@@ -31,6 +34,22 @@ export default function SuperAdminPage() {
 
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
+
+    // --- ★追加: IDの取得と生成ロジック ---
+    // 予約画面と同じキー 'bunkasai_user_id' を使用して同期
+    let stored = localStorage.getItem("bunkasai_user_id");
+    if (!stored) {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        let result = "";
+        for (let i = 0; i < 6; i++) {
+            result += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        stored = result;
+        localStorage.setItem("bunkasai_user_id", stored);
+    }
+    setMyUserId(stored);
+    // ------------------------------------------
+
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -48,7 +67,6 @@ export default function SuperAdminPage() {
       return {
           totalVenues: String(totalVenues).padStart(3, '0'),
           pausedVenues: String(pausedVenues).padStart(3, '0'),
-          // ★修正: 7桁埋めに変更
           totalReservations: String(totalReservations).padStart(7, '0'),
       };
   }, [attractions]);
@@ -140,7 +158,7 @@ export default function SuperAdminPage() {
         if (exists) return alert(`ID「${manualId}」は既に存在するため変更できません。別のIDにしてください。`);
     }
 
-    let slots = {};
+    let slots: any = {};
     let shouldResetSlots = true;
     let existingReservations = [];
 
@@ -233,183 +251,192 @@ export default function SuperAdminPage() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-4 bg-gray-900 min-h-screen text-white pb-32">
-      <div className="mb-6 border-b border-gray-700 pb-4">
-        <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
-        
-        <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
-            <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
-            <div className="mt-4 pt-4 border-t border-gray-700">
-                <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${originalId} を編集中` : "新規作成"}</h3>
-                <div className="grid gap-2 md:grid-cols-3 mb-2">
-                    <input 
-                        className={`p-2 rounded text-white bg-gray-700 ${isEditing && manualId !== originalId ? 'ring-2 ring-yellow-500' : ''}`}
-                        placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} 
-                    />
-                    <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
-                    <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
-                </div>
-                {isEditing && manualId !== originalId && (
-                    <div className="text-xs text-yellow-400 font-bold mb-2">⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。</div>
-                )}
-                <div className="grid grid-cols-4 gap-2 mb-2">
-                    <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                    <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                    <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="分"/>
-                    <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="定員"/>
-                </div>
-                <div className="flex items-center gap-3 mb-3">
-                     <label className="text-xs text-gray-400">1組人数:</label>
-                     <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
-                     <label className="text-xs text-gray-400 flex items-center gap-1">
-                        <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} /> 受付停止
-                     </label>
-                </div>
-                <div className="flex gap-2">
-                    <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">{isEditing ? "変更を保存" : "会場を作成"}</button>
-                    {isEditing && <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>}
-                </div>
-            </div>
-        </details>
-
-        <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600 mb-6">
-            <span className="text-xl">🔍</span>
-            <input 
-                className="flex-1 bg-transparent text-white outline-none" 
-                placeholder="ユーザーIDを入力して検索 (例: X9A2...)" 
-                value={searchUserId} onChange={e => setSearchUserId(e.target.value)} 
-            />
-        </div>
-
-        {/* ★ 一斉操作 & ダッシュボードパネル */}
-        <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
-             <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
-             
-             {/* カウンター表示 */}
-             <div className="flex justify-between items-center mb-6 bg-gray-900 p-4 rounded-lg border border-gray-800">
-                <div className="text-center">
-                    <div className="text-xs text-gray-500 mb-1">TOTAL VENUES</div>
-                    <div className="text-3xl font-mono font-bold text-white tracking-widest">{stats.totalVenues}</div>
-                </div>
-                <div className="text-center border-l border-r border-gray-700 px-6">
-                    <div className="text-xs text-gray-500 mb-1">PAUSED SHOPS</div>
-                    <div className="text-3xl font-mono font-bold text-red-500 tracking-widest">{stats.pausedVenues}</div>
-                </div>
-                <div className="text-center">
-                    <div className="text-xs text-gray-500 mb-1">TOTAL RSV.</div>
-                    {/* ★ 7桁表示に変更 */}
-                    <div className="text-3xl font-mono font-bold text-green-500 tracking-widest">{stats.totalReservations}</div>
-                </div>
-             </div>
-
-             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                 <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">🛑 一斉停止</button>
-                 <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">▶️ 一斉再開</button>
-                 <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">🗑️ 全予約削除</button>
-                 <button onClick={handleBulkDeleteVenues} className="bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 py-2 rounded text-xs font-bold transition">💀 会場全削除</button>
-             </div>
-        </div>
+    // ★変更点: 全体をラップしてStickyヘッダーを配置
+    <div className="min-h-screen bg-gray-900 text-white font-sans">
+      
+      {/* ★追加: ユーザーID表示バー (最上部・固定) */}
+      <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
+          <div className="text-xs text-gray-400">Logged in as:</div>
+          <div className="font-mono font-bold text-yellow-400 text-lg tracking-wider">
+              {myUserId || "---"}
+          </div>
       </div>
 
-      {!expandedShopId && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {attractions.map(shop => {
-                   const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
-                   
-                   // ★ 個別会場の予約数をカウント（使用済み含む）し、4桁埋め
-                   const totalShopRes = shop.reservations?.length || 0;
-                   const totalShopResDisplay = String(totalShopRes).padStart(4, '0');
-
-                   return (
-                      <button 
-                        key={shop.id} 
-                        onClick={() => setExpandedShopId(shop.id)}
-                        className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
-                      >
-                          <div>
-                              <span className="text-yellow-400 font-bold font-mono text-xl mr-3">{shop.id}</span>
-                              <span className="font-bold text-lg">{shop.name}</span>
-                              {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
-                          </div>
-                          
-                          {/* 右側の表示エリア（予約数 + 矢印） */}
-                          <div className="flex items-center gap-4">
-                              <div className="text-right">
-                                  <span className="text-[10px] text-gray-500 block">TOTAL</span>
-                                  <span className="font-mono text-xl text-blue-400">{totalShopResDisplay}</span>
-                              </div>
-                              <div className="text-gray-400 text-2xl">›</div>
-                          </div>
-                      </button>
-                   );
-              })}
-          </div>
-      )}
-
-      {expandedShopId && targetShop && (
-          <div className="animate-fade-in">
-              <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">← 会場一覧に戻る</button>
-
-              <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
-                  <div className="bg-gray-700 p-4 flex justify-between items-center">
-                      <div>
-                          <h2 className="text-2xl font-bold flex items-center gap-2">
-                              <span className="text-yellow-400 font-mono">{targetShop.id}</span>
-                              {targetShop.name}
-                          </h2>
-                          <p className="text-xs text-gray-400 mt-1">Pass: {targetShop.password} | 定員: {targetShop.capacity}組</p>
-                      </div>
-                      <div className="flex gap-2">
-                          <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
-                          <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500">会場削除</button>
-                      </div>
+      <div className="max-w-4xl mx-auto p-4 pb-32">
+        <div className="mb-6 border-b border-gray-700 pb-4">
+          <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
+          
+          <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
+              <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
+              <div className="mt-4 pt-4 border-t border-gray-700">
+                  <h3 className="text-sm font-bold mb-2 text-gray-300">{isEditing ? `✏️ ${originalId} を編集中` : "新規作成"}</h3>
+                  <div className="grid gap-2 md:grid-cols-3 mb-2">
+                      <input 
+                          className={`p-2 rounded text-white bg-gray-700 ${isEditing && manualId !== originalId ? 'ring-2 ring-yellow-500' : ''}`}
+                          placeholder="ID (例: 3B)" maxLength={3} value={manualId} onChange={e => setManualId(e.target.value)} 
+                      />
+                      <input className="bg-gray-700 p-2 rounded text-white" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
+                      <input className="bg-gray-700 p-2 rounded text-white" placeholder="パスワード(5桁)" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} />
                   </div>
-
-                  <div className="p-4 space-y-6">
-                      {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
-                          const slotCount = targetShop.slots[time] || 0;
-                          const isFull = slotCount >= targetShop.capacity;
-
-                          return (
-                              <div key={time} className={`border rounded-lg p-3 ${isFull ? 'border-red-500/50 bg-red-900/10' : 'border-gray-600 bg-gray-900/50'}`}>
-                                  <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
-                                      <h3 className="font-bold text-lg text-blue-300">{time}</h3>
-                                      <span className={`text-sm font-bold ${isFull ? 'text-red-400' : 'text-green-400'}`}>
-                                          予約: {slotCount} / {targetShop.capacity}
-                                      </span>
-                                  </div>
-
-                                  <div className="space-y-2">
-                                      {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
-                                      {reservations.map((res: any) => {
-                                          const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
-                                          return (
-                                              <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
-                                                  <div>
-                                                      <div className="font-mono font-bold text-yellow-400">ID: {res.userId}</div>
-                                                      <div className="text-xs text-gray-300">{res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}</div>
-                                                  </div>
-                                                  <div className="flex gap-1">
-                                                      {res.status !== 'used' ? (
-                                                          <>
-                                                              <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="bg-green-600 text-xs px-3 py-1.5 rounded font-bold hover:bg-green-500">入場</button>
-                                                              <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
-                                                          </>
-                                                      ) : (
-                                                          <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
-                                                      )}
-                                                  </div>
-                                              </div>
-                                          );
-                                      })}
-                                  </div>
-                              </div>
-                          );
-                      })}
+                  {isEditing && manualId !== originalId && (
+                      <div className="text-xs text-yellow-400 font-bold mb-2">⚠️ IDが変更されています。保存すると新しいIDにデータが移動します。</div>
+                  )}
+                  <div className="grid grid-cols-4 gap-2 mb-2">
+                      <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
+                      <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
+                      <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="分"/>
+                      <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="定員"/>
+                  </div>
+                  <div className="flex items-center gap-3 mb-3">
+                      <label className="text-xs text-gray-400">1組人数:</label>
+                      <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
+                      <label className="text-xs text-gray-400 flex items-center gap-1">
+                          <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} /> 受付停止
+                      </label>
+                  </div>
+                  <div className="flex gap-2">
+                      <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-2 rounded font-bold">{isEditing ? "変更を保存" : "会場を作成"}</button>
+                      {isEditing && <button onClick={resetForm} className="bg-gray-600 px-4 rounded">キャンセル</button>}
                   </div>
               </div>
+          </details>
+
+          <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600 mb-6">
+              <span className="text-xl">🔍</span>
+              <input 
+                  className="flex-1 bg-transparent text-white outline-none" 
+                  placeholder="ユーザーIDを入力して検索 (例: X9A2...)" 
+                  value={searchUserId} onChange={e => setSearchUserId(e.target.value)} 
+              />
           </div>
-      )}
+
+          {/* ★ 一斉操作 & ダッシュボードパネル */}
+          <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
+              <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
+              
+              {/* カウンター表示 */}
+              <div className="flex justify-between items-center mb-6 bg-gray-900 p-4 rounded-lg border border-gray-800">
+                  <div className="text-center">
+                      <div className="text-xs text-gray-500 mb-1">TOTAL VENUES</div>
+                      <div className="text-3xl font-mono font-bold text-white tracking-widest">{stats.totalVenues}</div>
+                  </div>
+                  <div className="text-center border-l border-r border-gray-700 px-6">
+                      <div className="text-xs text-gray-500 mb-1">PAUSED SHOPS</div>
+                      <div className="text-3xl font-mono font-bold text-red-500 tracking-widest">{stats.pausedVenues}</div>
+                  </div>
+                  <div className="text-center">
+                      <div className="text-xs text-gray-500 mb-1">TOTAL RSV.</div>
+                      <div className="text-3xl font-mono font-bold text-green-500 tracking-widest">{stats.totalReservations}</div>
+                  </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">🛑 一斉停止</button>
+                  <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">▶️ 一斉再開</button>
+                  <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">🗑️ 全予約削除</button>
+                  <button onClick={handleBulkDeleteVenues} className="bg-gray-800 hover:bg-gray-700 text-gray-400 border border-gray-700 py-2 rounded text-xs font-bold transition">💀 会場全削除</button>
+              </div>
+          </div>
+        </div>
+
+        {!expandedShopId && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {attractions.map(shop => {
+                    const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
+                    
+                    const totalShopRes = shop.reservations?.length || 0;
+                    const totalShopResDisplay = String(totalShopRes).padStart(4, '0');
+
+                    return (
+                        <button 
+                          key={shop.id} 
+                          onClick={() => setExpandedShopId(shop.id)}
+                          className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
+                        >
+                            <div>
+                                <span className="text-yellow-400 font-bold font-mono text-xl mr-3">{shop.id}</span>
+                                <span className="font-bold text-lg">{shop.name}</span>
+                                {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                            </div>
+                            
+                            <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                    <span className="text-[10px] text-gray-500 block">TOTAL</span>
+                                    <span className="font-mono text-xl text-blue-400">{totalShopResDisplay}</span>
+                                </div>
+                                <div className="text-gray-400 text-2xl">›</div>
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        )}
+
+        {expandedShopId && targetShop && (
+            <div className="animate-fade-in">
+                <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">← 会場一覧に戻る</button>
+
+                <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
+                    <div className="bg-gray-700 p-4 flex justify-between items-center">
+                        <div>
+                            <h2 className="text-2xl font-bold flex items-center gap-2">
+                                <span className="text-yellow-400 font-mono">{targetShop.id}</span>
+                                {targetShop.name}
+                            </h2>
+                            <p className="text-xs text-gray-400 mt-1">Pass: {targetShop.password} | 定員: {targetShop.capacity}組</p>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500">設定編集</button>
+                            <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500">会場削除</button>
+                        </div>
+                    </div>
+
+                    <div className="p-4 space-y-6">
+                        {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
+                            const slotCount = targetShop.slots[time] || 0;
+                            const isFull = slotCount >= targetShop.capacity;
+
+                            return (
+                                <div key={time} className={`border rounded-lg p-3 ${isFull ? 'border-red-500/50 bg-red-900/10' : 'border-gray-600 bg-gray-900/50'}`}>
+                                    <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
+                                        <h3 className="font-bold text-lg text-blue-300">{time}</h3>
+                                        <span className={`text-sm font-bold ${isFull ? 'text-red-400' : 'text-green-400'}`}>
+                                            予約: {slotCount} / {targetShop.capacity}
+                                        </span>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        {reservations.length === 0 && <p className="text-xs text-gray-500 text-center py-1">予約なし</p>}
+                                        {reservations.map((res: any) => {
+                                            const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
+                                            return (
+                                                <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
+                                                    <div>
+                                                        <div className="font-mono font-bold text-yellow-400">ID: {res.userId}</div>
+                                                        <div className="text-xs text-gray-300">{res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}</div>
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        {res.status !== 'used' ? (
+                                                            <>
+                                                                <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="bg-green-600 text-xs px-3 py-1.5 rounded font-bold hover:bg-green-500">入場</button>
+                                                                <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
+                                                            </>
+                                                        ) : (
+                                                            <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            </div>
+        )}
+      </div>
     </div>
   );
 }
