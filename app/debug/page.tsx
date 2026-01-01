@@ -203,6 +203,9 @@ export default function SuperAdminPage() {
 
   // --- 予約操作関連 ---
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
+     // ★修正点1: 停止中(垢バン)なら操作をブロック
+     if(shop.isPaused) return alert("この会場は現在「停止中」のため、操作できません。設定編集から解除してください。");
+
      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
      const updatedRes = { ...res, status: newStatus };
@@ -210,6 +213,9 @@ export default function SuperAdminPage() {
   };
 
   const cancelReservation = async (shop: any, res: any) => {
+      // ★修正点2: 停止中(垢バン)なら操作をブロック
+      if(shop.isPaused) return alert("この会場は現在「停止中」のため、操作できません。設定編集から解除してください。");
+
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
@@ -366,6 +372,12 @@ export default function SuperAdminPage() {
                   </div>
 
                   <div className="p-4 space-y-6">
+                      {targetShop.isPaused && (
+                          <div className="bg-red-900/50 border border-red-500 text-red-200 p-3 rounded text-center text-sm font-bold mb-4">
+                              ⛔ 現在この会場は停止中のため、入場処理や予約の取り消しはできません。
+                          </div>
+                      )}
+                      
                       {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
                           const slotCount = targetShop.slots[time] || 0;
                           const isFull = slotCount >= targetShop.capacity;
@@ -392,11 +404,30 @@ export default function SuperAdminPage() {
                                                   <div className="flex gap-1">
                                                       {res.status !== 'used' ? (
                                                           <>
-                                                              <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="bg-green-600 text-xs px-3 py-1.5 rounded font-bold hover:bg-green-500">入場</button>
-                                                              <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-600 text-xs px-3 py-1.5 rounded hover:bg-red-500">取消</button>
+                                                              {/* ★修正点3: disabled属性の追加とスタイル調整 */}
+                                                              <button 
+                                                                onClick={() => toggleReservationStatus(targetShop, res, "used")} 
+                                                                disabled={targetShop.isPaused}
+                                                                className={`text-xs px-3 py-1.5 rounded font-bold ${targetShop.isPaused ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 text-white'}`}
+                                                              >
+                                                                入場
+                                                              </button>
+                                                              <button 
+                                                                onClick={() => cancelReservation(targetShop, res)} 
+                                                                disabled={targetShop.isPaused}
+                                                                className={`text-xs px-3 py-1.5 rounded ${targetShop.isPaused ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-500 text-white'}`}
+                                                              >
+                                                                取消
+                                                              </button>
                                                           </>
                                                       ) : (
-                                                          <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="bg-gray-500 text-xs px-2 py-1.5 rounded hover:bg-gray-400">入場取消</button>
+                                                          <button 
+                                                            onClick={() => toggleReservationStatus(targetShop, res, "reserved")} 
+                                                            disabled={targetShop.isPaused}
+                                                            className={`text-xs px-2 py-1.5 rounded ${targetShop.isPaused ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gray-500 hover:bg-gray-400 text-white'}`}
+                                                          >
+                                                            入場取消
+                                                          </button>
                                                       )}
                                                   </div>
                                               </div>
