@@ -1,85 +1,194 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
-import { db, auth } from "../../../../firebase"; 
-import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove } from "firebase/firestore";
+import { db, auth } from "../../../../firebase"; // パスは環境に合わせて調整してください
+import { collection, onSnapshot, doc, updateDoc, setDoc, deleteDoc, getDoc, getDocs, arrayUnion, arrayRemove, serverTimestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-export default function HackPage() {
-  const [attractions, setAttractions] = useState<any[]>([]);
-  
-  // --- 1. ユーザー詳細管理用ステート ---
+type Tab = "venues" | "users";
+
+export default function AdminPage() {
+  // --- 共通ステート ---
+  const [activeTab, setActiveTab] = useState<Tab>("venues");
+  const [myUserId, setMyUserId] = useState("");
+
+  // --- データソース ---
+  const [attractions, setAttractions] = useState<any[]>([]); // 会場データ
+  const [users, setUsers] = useState<any[]>([]); // ★ユーザーDBデータ
+
+  // --- 1. 会場管理(Hack)用ステート ---
   const [targetStudentId, setTargetStudentId] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [studentReservations, setStudentReservations] = useState<any[]>([]);
-
-  // 強制予約用
   const [addShopId, setAddShopId] = useState("");
   const [addTime, setAddTime] = useState("");
-
-  // --- 2. 会場設定セクション用ステート ---
   const [showVenueConfig, setShowVenueConfig] = useState(false); 
   const [selectedConfigShopId, setSelectedConfigShopId] = useState<string | null>(null);
-  const [configInputUserId, setConfigInputUserId] = useState(""); // リスト追加用
-
-  // UI表示切り替え用（true=ホワイトリスト編集, false=ブラックリスト編集）
+  const [configInputUserId, setConfigInputUserId] = useState("");
   const [showGuestWhite, setShowGuestWhite] = useState(false);
   const [showStudentWhite, setShowStudentWhite] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState(""); // 左サイドバー用
 
-  // 左側サイドバー検索用
-  const [userSearchQuery, setUserSearchQuery] = useState("");
+  // --- 2. ユーザーDB管理用ステート ---
+  const [dbSearchQuery, setDbSearchQuery] = useState(""); // ユーザー管理タブ用
 
+  // =================================================================
+  //  初期化・データ監視
+  // =================================================================
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAttractions(data);
+
+    // A. ID生成と自己保存 (管理者が開いた場合もDBに保存)
+    const initUser = async () => {
+        let stored = localStorage.getItem("bunkasai_user_id");
+        if (!stored) {
+            const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+            let result = "";
+            for (let i = 0; i < 6; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            stored = result;
+            localStorage.setItem("bunkasai_user_id", stored);
+        }
+        setMyUserId(stored);
+
+        // ★重要: DB(usersコレクション)に自分を保存
+        const userRef = doc(db, "users", stored);
+        const snap = await getDoc(userRef);
+        if (!snap.exists()) {
+            await setDoc(userRef, {
+                userId: stored,
+                createdAt: serverTimestamp(),
+                nickname: "管理者", // 初期値
+                isPinned: true,    // 管理者はピン留めしておく
+                isBanned: false,
+            });
+        }
+    };
+    initUser();
+
+    // B. 会場データの監視
+    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
+      setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    return () => unsub();
+
+    // C. ★ユーザーデータの監視 (DB管理用)
+    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+        setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => {
+        unsubAttractions();
+        unsubUsers();
+    };
   }, []);
 
-  // --- ★重要: 会場を選択した瞬間に、その会場のモードに合わせて編集画面をセットする ---
+  // 会場設定の連動ロジック
   useEffect(() => {
     if (selectedConfigShopId) {
         const shop = attractions.find(s => s.id === selectedConfigShopId);
         if (shop) {
-            // DBに設定がない(undefined)場合も 'black' (false) として扱い、全員許可状態（ブラックリスト編集）にする
             setShowGuestWhite(shop.guestListType === "white");
             setShowStudentWhite(shop.studentListType === "white");
         }
     }
   }, [selectedConfigShopId, attractions]);
 
-  // --- ヘルパー: ID抽出 ---
+
+  // =================================================================
+  //  機能群 1: ユーザーDB管理 (New)
+  // =================================================================
+  
+  // ニックネーム更新
+  const handleUpdateNickname = async (uid: string, newNick: string) => {
+    await updateDoc(doc(db, "users", uid), { nickname: newNick });
+  };
+
+  // ピン留め
+  const togglePin = async (user: any) => {
+    await updateDoc(doc(db, "users", user.id), { isPinned: !user.isPinned });
+  };
+
+  // 垢バン (Ban)
+  const toggleBan = async (user: any) => {
+    const confirmMsg = user.isBanned 
+      ? `ID「${user.id}」のBanを解除しますか？` 
+      : `ID「${user.id}」を垢バン(操作禁止)にしますか？\n※予約画面・管理画面の操作が一切できなくなります。`;
+    
+    if (!confirm(confirmMsg)) return;
+    await updateDoc(doc(db, "users", user.id), { isBanned: !user.isBanned });
+  };
+
+  // 全データ抹消 (Wipe)
+  const wipeUserData = async (targetUid: string) => {
+    if (!confirm(`【危険】User ID: ${targetUid} の全予約データを強制削除します。\n枠を空けますか？`)) return;
+
+    // 全会場をスキャンして予約を削除
+    let deletedCount = 0;
+    for (const shop of attractions) {
+        if (!shop.reservations) continue;
+        const targetRes = shop.reservations.filter((r: any) => r.userId === targetUid);
+        
+        if (targetRes.length > 0) {
+            const newRes = shop.reservations.filter((r: any) => r.userId !== targetUid);
+            // スロット(枠)のカウントを戻す
+            let newSlots = { ...shop.slots };
+            targetRes.forEach((r: any) => {
+                if (newSlots[r.time] > 0) newSlots[r.time]--;
+            });
+
+            await updateDoc(doc(db, "attractions", shop.id), {
+                reservations: newRes,
+                slots: newSlots
+            });
+            deletedCount += targetRes.length;
+        }
+    }
+    alert(`完了: ${deletedCount} 件の予約データを削除しました。`);
+  };
+
+  // DBからユーザー削除
+  const deleteUserFromDb = async (targetUid: string) => {
+    if(!confirm(`ユーザー「${targetUid}」をデータベースから完全に削除しますか？\n(予約データがある場合は別途「全データ削除」を行ってください)`)) return;
+    await deleteDoc(doc(db, "users", targetUid));
+  };
+
+  // DB用フィルタリング
+  const filteredDbUsers = users.filter(u => {
+      const q = dbSearchQuery.toUpperCase();
+      return u.id.includes(q) || (u.nickname && u.nickname.toUpperCase().includes(q));
+  }).sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return a.id.localeCompare(b.id);
+  });
+
+
+  // =================================================================
+  //  機能群 2: 会場管理・予約操作 (Existing)
+  // =================================================================
+
+  // サイドバー用ID抽出 (既存のロジック: 予約履歴などから抽出)
   const allUserIds = useMemo(() => {
       const ids = new Set<string>();
       attractions.forEach(shop => {
           shop.reservations?.forEach((res: any) => { if (res.userId) ids.add(res.userId); });
-          // ★修正: フィールド名を統一
-          shop.allowedUsers?.forEach((id: string) => ids.add(id));     // ゲスト許可
-          shop.bannedUsers?.forEach((id: string) => ids.add(id));      // ゲスト拒否
-          shop.adminAllowedUsers?.forEach((id: string) => ids.add(id)); // 生徒許可
-          shop.adminBannedUsers?.forEach((id: string) => ids.add(id));  // 生徒拒否
+          shop.allowedUsers?.forEach((id: string) => ids.add(id));
+          shop.bannedUsers?.forEach((id: string) => ids.add(id));
+          shop.adminAllowedUsers?.forEach((id: string) => ids.add(id));
+          shop.adminBannedUsers?.forEach((id: string) => ids.add(id));
       });
       return Array.from(ids).sort();
   }, [attractions]);
 
-  // --- 検索ロジック ---
-  const filteredUserIds = useMemo(() => {
+  const filteredSidebarIds = useMemo(() => {
       if (!userSearchQuery) return allUserIds;
-      const keywords = userSearchQuery.toUpperCase().split(/\s+/).filter(k => k.length > 0);
-      return allUserIds.filter(id => {
-          const idUpper = id.toUpperCase();
-          return keywords.every(keyword => idUpper.includes(keyword));
-      });
+      const q = userSearchQuery.toUpperCase();
+      return allUserIds.filter(id => id.toUpperCase().includes(q));
   }, [allUserIds, userSearchQuery]);
 
-  // --- ID選択時の共通処理 ---
   const selectUser = (id: string) => {
-      setTargetStudentId(id);       // 上部のユーザー操作用
-      setConfigInputUserId(id);     // 下部の会場設定用
+      setTargetStudentId(id);
+      setConfigInputUserId(id);
   };
 
-  // --- 機能: 全店舗一括停止 ---
   const toggleGlobalPause = async (currentState: boolean) => {
       if(!confirm(currentState ? "全店舗の受付を再開させますか？" : "全店舗 緊急停止しますか？")) return;
       attractions.forEach(async (shop) => {
@@ -87,87 +196,50 @@ export default function HackPage() {
       });
   };
 
-  // --- 機能: モード切替（White/Black） ---
   const toggleListMode = async (type: "guest" | "student") => {
       if (!selectedConfigShopId) return;
       const targetShop = attractions.find(s => s.id === selectedConfigShopId);
       if(!targetShop) return;
-      
       const field = type === "guest" ? "guestListType" : "studentListType";
-      // 招待制フラグ(isRestricted)も連動させる必要がある場合はここで制御可能ですが、
-      // 今回はリストタイプの切り替えのみを行います
       const currentMode = targetShop[field] === "white" ? "white" : "black";
       const newMode = currentMode === "white" ? "black" : "white";
-
-      if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト(許可制)" : "ブラックリスト(拒否制)"}」に変更しますか？\n\n※ホワイトリストにすると、登録されていない人は一切操作できなくなります。`)) return;
-
-      // ★修正: ゲスト設定の場合は、予約画面で使われている `isRestricted` フラグも更新してあげるのが親切
-      const updates: any = { [field]: newMode };
-      if (type === "guest") {
-          updates.isRestricted = (newMode === "white");
-      }
-
-      await updateDoc(doc(db, "attractions", selectedConfigShopId), updates);
+      if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト" : "ブラックリスト"}」に変更しますか？`)) return;
       
-      // UIも即座に同期
-      if(type === "guest") setShowGuestWhite(newMode === "white");
-      else setShowStudentWhite(newMode === "white");
+      const updates: any = { [field]: newMode };
+      if (type === "guest") updates.isRestricted = (newMode === "white"); // 予約画面用フラグも更新
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), updates);
   };
 
-  // --- 機能: 全ユーザー一括追加（救済措置） ---
   const addAllUsersToWhiteList = async (type: "guest" | "student") => {
       if (!selectedConfigShopId) return;
       const targetShop = attractions.find(s => s.id === selectedConfigShopId);
       if(!targetShop) return;
-      
-      // ★修正: フィールド名を統一 (allowedUsers)
       const field = type === "guest" ? "allowedUsers" : "adminAllowedUsers";
       const currentList = targetShop[field] || [];
       const idsToAdd = allUserIds.filter(id => !currentList.includes(id));
-
-      if(idsToAdd.length === 0) return alert("追加対象の新規ユーザーはいません。（全員登録済み）");
-
-      if(!confirm(`【注意】\n現在システムで認識している全ユーザー(${idsToAdd.length}人)を許可リストに追加しますか？`)) return;
-
-      try {
-          await updateDoc(doc(db, "attractions", selectedConfigShopId), {
-              [field]: arrayUnion(...idsToAdd)
-          });
-          alert("完了しました");
-      } catch(e) { console.error(e); alert("エラーが発生しました。"); }
+      if(idsToAdd.length === 0) return alert("追加対象がいません");
+      if(!confirm(`全ユーザー(${idsToAdd.length}人)を許可リストに追加しますか？`)) return;
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), { [field]: arrayUnion(...idsToAdd) });
   };
 
-  // --- 機能: リスト更新 ---
   const handleListUpdate = async (type: "guest" | "student", action: "add" | "remove", userId: string) => {
       if (!userId || !selectedConfigShopId) return;
-      const targetShop = attractions.find(s => s.id === selectedConfigShopId);
-      if(!targetShop) return;
-
       const isUiWhite = type === "guest" ? showGuestWhite : showStudentWhite;
-      
-      // ★修正: フィールド名を予約画面(Home)と統一
-      // ゲスト用: bannedUsers / allowedUsers
-      // 生徒用: adminBannedUsers / adminAllowedUsers
       const targetField = type === "guest" 
           ? (isUiWhite ? "allowedUsers" : "bannedUsers")
           : (isUiWhite ? "adminAllowedUsers" : "adminBannedUsers");
-
-      try {
-          await updateDoc(doc(db, "attractions", selectedConfigShopId), {
-              [targetField]: action === "add" ? arrayUnion(userId) : arrayRemove(userId)
-          });
-          if(action === "add") setConfigInputUserId(""); 
-      } catch (e) { console.error(e); alert("更新エラー"); }
+      await updateDoc(doc(db, "attractions", selectedConfigShopId), {
+          [targetField]: action === "add" ? arrayUnion(userId) : arrayRemove(userId)
+      });
+      if(action === "add") setConfigInputUserId(""); 
   };
 
   const fetchStudentData = () => {
-    if(!targetStudentId) return alert("ユーザーを選択またはIDを入力してください");
+    if(!targetStudentId) return alert("ユーザーを選択してください");
     const foundReservations: any[] = [];
     attractions.forEach(shop => {
         shop.reservations?.forEach((res: any) => {
-            if(res.userId === targetStudentId) {
-                foundReservations.push({ shopId: shop.id, shopName: shop.name, ...res });
-            }
+            if(res.userId === targetStudentId) foundReservations.push({ shopId: shop.id, shopName: shop.name, ...res });
         });
     });
     setStudentReservations(foundReservations);
@@ -185,385 +257,304 @@ export default function HackPage() {
   };
 
   const forceDeleteReservation = async (res: any) => {
-      if(!confirm(`削除しますか？\n${res.shopName}`)) return;
+      if(!confirm(`削除しますか？`)) return;
       const shop = attractions.find(s => s.id === res.shopId);
       if(!shop) return;
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 1) - 1) };
       await updateDoc(doc(db, "attractions", res.shopId), { reservations: otherRes, slots: updatedSlots });
-      setIsModalOpen(false); 
-      fetchStudentData();
+      setIsModalOpen(false); fetchStudentData();
   };
 
   const forceAddReservation = async () => {
       if(!addShopId || !addTime) return alert("会場と時間を選択してください");
       const shop = attractions.find(s => s.id === addShopId);
       if(!shop) return;
-      
       const newRes = { userId: targetStudentId, timestamp: Date.now(), time: addTime, status: "reserved" };
-      const currentCount = shop.slots?.[addTime] || 0;
-      const updatedSlots = { ...shop.slots, [addTime]: currentCount + 1 };
-      
+      const updatedSlots = { ...shop.slots, [addTime]: (shop.slots?.[addTime] || 0) + 1 };
       await updateDoc(doc(db, "attractions", addShopId), {
-          reservations: [...(shop.reservations || []), newRes],
-          slots: updatedSlots
+          reservations: [...(shop.reservations || []), newRes], slots: updatedSlots
       });
-      alert(`強制予約完了: ${shop.name} @ ${addTime}`);
+      alert(`強制予約完了`);
       fetchStudentData();
   };
 
   const targetShop = attractions.find(s => s.id === selectedConfigShopId);
   const targetShopTimes = useMemo(() => {
       const shop = attractions.find(s => s.id === addShopId);
-      if (!shop || !shop.slots) return [];
-      return Object.keys(shop.slots).sort();
+      return shop && shop.slots ? Object.keys(shop.slots).sort() : [];
   }, [addShopId, attractions]);
 
+
   return (
-    <div className="flex h-screen bg-black text-green-500 font-mono overflow-hidden">
+    <div className="flex flex-col h-screen bg-black text-green-500 font-mono overflow-hidden">
       
-      {/* ================= 左サイドバー (常時表示) ================= */}
-      <aside className="w-1/4 min-w-[250px] border-r border-green-900 flex flex-col bg-gray-900/50">
-          <div className="p-4 border-b border-green-900">
-              <h2 className="text-lg font-bold text-white mb-2">DB: 全ユーザー一覧</h2>
-              <div className="relative">
-                  <input 
-                      className="w-full bg-black text-white border border-gray-600 p-2 pr-8 rounded text-sm outline-none focus:border-green-500"
-                      placeholder="ID検索 (例: A 2)"
-                      value={userSearchQuery}
-                      onChange={e => setUserSearchQuery(e.target.value)}
-                  />
-                  {userSearchQuery && (
-                      <button onClick={() => setUserSearchQuery("")} className="absolute right-2 top-2 text-gray-500 hover:text-white">✕</button>
-                  )}
-              </div>
-              <p className="text-xs text-gray-500 mt-2 text-right">{filteredUserIds.length} 件ヒット</p>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar">
-              {filteredUserIds.length > 0 ? (
-                  filteredUserIds.map(id => (
-                      <button 
-                        key={id} 
-                        onClick={() => selectUser(id)}
-                        className={`w-full text-left text-sm p-3 border-b border-gray-800 hover:bg-green-900/30 transition flex items-center justify-between
-                            ${(targetStudentId === id || configInputUserId === id) ? "bg-green-900/50 text-white border-l-4 border-l-green-500" : "text-gray-300"}`}
-                      >
-                          <span className="font-mono">{id}</span>
-                          <span className="text-[10px] text-gray-600">選択</span>
-                      </button>
-                  ))
-              ) : (
-                  <div className="p-4 text-center text-gray-600 text-sm">ユーザーが見つかりません</div>
-              )}
-          </div>
-      </aside>
-
-      {/* ================= 右メインコンテンツ (スクロール可) ================= */}
-      <main className="flex-1 overflow-y-auto p-6 relative">
-          <h1 className="text-3xl font-bold mb-6 border-b border-green-800 pb-2 flex justify-between items-center">
-              <span>裏管理コンソール</span>
-          </h1>
-
-          {/* --- A. 特定ユーザー操作パネル (常時一番上に配置) --- */}
-          <section className="mb-10 bg-blue-900/10 border border-blue-800 rounded p-6 shadow-lg shadow-blue-900/20">
-              <h2 className="text-xl font-bold text-blue-400 mb-4 flex items-center gap-2">
-                  <span>特定ユーザー操作</span>
-                  <span className="text-xs text-gray-400 font-normal">（左のリストから選択するとIDが入ります）</span>
-              </h2>
-              <div className="flex gap-4 items-stretch">
-                  <div className="flex-1">
-                      <label className="text-xs text-gray-500 block mb-1">操作対象ID</label>
-                      <input 
-                          className="w-full bg-black border border-blue-500 text-white p-3 rounded text-2xl font-mono tracking-wider outline-none focus:ring-2 ring-blue-500" 
-                          placeholder="ID未選択" 
-                          value={targetStudentId}
-                          onChange={(e) => setTargetStudentId(e.target.value.toUpperCase())}
-                      />
-                  </div>
+      {/* ================= ヘッダー (タブ切り替え) ================= */}
+      <header className="flex justify-between items-center bg-gray-900 border-b border-green-900 px-4 py-2 shrink-0">
+          <div className="flex items-center gap-4">
+              <h1 className="text-xl font-bold text-white tracking-widest">ADMIN<span className="text-green-500">_CONSOLE</span></h1>
+              <div className="flex bg-black rounded border border-gray-700 p-1">
                   <button 
-                    onClick={fetchStudentData} 
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-8 rounded shadow-lg text-lg transition"
+                    onClick={() => setActiveTab("venues")}
+                    className={`px-4 py-1 rounded text-sm transition ${activeTab === "venues" ? "bg-green-700 text-white font-bold" : "text-gray-400 hover:text-white"}`}
                   >
-                      詳細・操作パネルを開く
+                    📍 会場・予約管理
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab("users")}
+                    className={`px-4 py-1 rounded text-sm transition ${activeTab === "users" ? "bg-blue-700 text-white font-bold" : "text-gray-400 hover:text-white"}`}
+                  >
+                    👤 ユーザーデータベース
                   </button>
               </div>
-          </section>
-
-          {/* --- B. 会場設定が開いていない時だけ表示 --- */}
-          {!showVenueConfig && (
-              <section className="animate-fade-in">
-                  <div className="border border-red-900/50 p-6 rounded bg-red-900/10 flex flex-col md:flex-row justify-between items-center gap-4">
-                      <div>
-                          <h2 className="text-xl font-bold text-red-500 mb-1">⚠️ 全店舗 緊急操作</h2>
-                          <p className="text-sm text-gray-400">現在: <span className="text-white font-bold">{attractions.filter(a => a.isPaused).length}</span> 店舗が停止中</p>
-                      </div>
-                      <button 
-                          onClick={() => toggleGlobalPause(attractions.every(a => a.isPaused))}
-                          className="bg-red-800 hover:bg-red-700 text-white font-bold px-8 py-3 rounded text-lg border border-red-500 shadow-red-900/50 shadow-lg"
-                      >
-                          {attractions.every(a => a.isPaused) ? "全店舗を一括再開" : "全店舗を緊急停止"}
-                      </button>
-                  </div>
-              </section>
-          )}
-
-          {/* --- C. 会場設定 (Venue Settings) --- */}
-          <div className="mt-10 pt-6 border-t border-gray-800">
-              <button 
-                onClick={() => setShowVenueConfig(!showVenueConfig)}
-                className={`w-full py-4 px-6 rounded text-left flex justify-between items-center transition
-                    ${showVenueConfig ? 'bg-gray-800 text-white' : 'bg-gray-900 hover:bg-gray-800 text-green-400 border border-green-900'}`}
-              >
-                  <span className="text-xl font-bold">🛠️ 会場設定 (リスト管理)</span>
-                  <span className="text-sm">{showVenueConfig ? "▲ 閉じる" : "▼ 開く"}</span>
-              </button>
-
-              {showVenueConfig && (
-                  <div className="mt-4 p-4 bg-gray-900 border border-gray-700 rounded animate-fade-in min-h-[500px]">
-                      {!selectedConfigShopId ? (
-                          // 一覧表示
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                              {attractions.map(shop => (
-                                  <button 
-                                    key={shop.id}
-                                    onClick={() => setSelectedConfigShopId(shop.id)}
-                                    className={`p-5 rounded border text-left hover:bg-gray-800 transition shadow-lg
-                                        ${shop.isPaused ? 'border-red-500 bg-red-900/20' : 'border-gray-600 bg-black'}`}
-                                  >
-                                      <div className="flex justify-between items-start mb-2">
-                                          <span className="text-2xl font-mono text-yellow-500">{shop.id}</span>
-                                          {shop.isPaused && <span className="bg-red-600 text-white text-[10px] px-2 py-1 rounded">停止中</span>}
-                                      </div>
-                                      <span className="text-lg font-bold text-white block">{shop.name}</span>
-                                      <div className="mt-2 text-[10px] text-gray-400 flex gap-2">
-                                          {/* ★修正: 予約画面(Home)と連動させるため、isRestricted の状態も考慮して表示 */}
-                                          <span>客: {shop.guestListType === 'white' || shop.isRestricted ? '許可制' : '拒否制(全員OK)'}</span>
-                                          <span>生: {shop.studentListType === 'white' ? '許可制' : '拒否制(全員OK)'}</span>
-                                      </div>
-                                  </button>
-                              ))}
-                          </div>
-                      ) : targetShop && (
-                          // 詳細編集
-                          <div>
-                              <div className="flex items-center gap-4 mb-6 pb-4 border-b border-gray-700">
-                                  <button onClick={() => setSelectedConfigShopId(null)} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm">← 一覧に戻る</button>
-                                  <h2 className="text-2xl font-bold text-white"><span className="text-yellow-400 font-mono">{targetShop.id}</span> {targetShop.name}</h2>
-                              </div>
-
-                              {/* 受付スイッチ */}
-                              <div className="flex items-center justify-between bg-black p-4 rounded border border-gray-600 mb-8">
-                                  <div>
-                                      <h3 className="font-bold text-white">受付ステータス</h3>
-                                      <p className="text-xs text-gray-500">{targetShop.isPaused ? "現在: 停止中" : "現在: 稼働中"}</p>
-                                  </div>
-                                  <button 
-                                    onClick={() => updateDoc(doc(db, "attractions", targetShop.id), { isPaused: !targetShop.isPaused })}
-                                    className={`px-6 py-2 rounded font-bold ${targetShop.isPaused ? 'bg-red-600 text-white' : 'bg-green-600 text-black'}`}
-                                  >
-                                      {targetShop.isPaused ? "停止中 (再開する)" : "稼働中 (停止する)"}
-                                  </button>
-                              </div>
-
-                              {/* リスト追加用入力欄 */}
-                              <div className="mb-4">
-                                  <label className="text-xs text-gray-500 block mb-1">リストに追加するID (左サイドバーで選択可)</label>
-                                  <input 
-                                    className="w-full bg-black text-white border border-green-500 p-2 rounded"
-                                    placeholder="IDを入力..."
-                                    value={configInputUserId}
-                                    onChange={e => setConfigInputUserId(e.target.value.toUpperCase())}
-                                  />
-                              </div>
-
-                              <div className="grid md:grid-cols-2 gap-6">
-                                  {/* 客設定 */}
-                                  <div className={`p-4 rounded border transition duration-300 ${showGuestWhite ? 'border-white bg-green-900/20' : 'border-gray-600 bg-black'}`}>
-                                      <div className="flex justify-between items-center mb-2">
-                                          <h3 className="font-bold">一般客設定</h3>
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-xs">{showGuestWhite ? '現在: ホワイト(許可)リスト' : '現在: ブラック(拒否)リスト'}</span>
-                                            <button 
-                                                onClick={() => toggleListMode("guest")} 
-                                                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-500"
-                                            >
-                                                モード切替
-                                            </button>
-                                          </div>
-                                      </div>
-                                      <p className="text-xs mb-4 text-gray-400">
-                                          {showGuestWhite 
-                                            ? "※ リストにいる人だけが予約できます (isRestricted: ON)" 
-                                            : "※ 基本全員OK (リストの人だけ拒否)"}
-                                      </p>
-                                      
-                                      <button 
-                                        onClick={() => handleListUpdate("guest", "add", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-2 ${showGuestWhite ? 'bg-green-700 text-white' : 'bg-red-900 text-white'}`}
-                                      >
-                                          {showGuestWhite ? "ホワイトリストに追加" : "ブラックリストに追加(BAN)"}
-                                      </button>
-
-                                      {/* 救済ボタン (Whiteモードのみ) */}
-                                      {showGuestWhite && (
-                                          <button 
-                                            onClick={() => addAllUsersToWhiteList("guest")}
-                                            className="w-full py-2 mb-4 bg-green-900/50 border border-green-500 text-green-200 text-xs rounded hover:bg-green-800"
-                                          >
-                                              ＋ 全ユーザーを一括許可 (救済)
-                                          </button>
-                                      )}
-
-                                      <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {/* ★修正: 表示リストも allowedUsers / bannedUsers に変更 */}
-                                          {(showGuestWhite ? targetShop.allowedUsers : targetShop.bannedUsers)?.map((uid: string) => (
-                                              <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
-                                                  <span>{uid}</span>
-                                                  <button onClick={() => handleListUpdate("guest", "remove", uid)} className="text-red-500 hover:text-red-300">削除</button>
-                                              </li>
-                                          ))}
-                                          <li className="text-[10px] text-right text-gray-500 mt-2">
-                                              {(showGuestWhite ? targetShop.allowedUsers : targetShop.bannedUsers)?.length || 0}人 登録中
-                                          </li>
-                                      </ul>
-                                  </div>
-
-                                  {/* 生徒設定 */}
-                                  <div className={`p-4 rounded border transition duration-300 ${showStudentWhite ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
-                                      <div className="flex justify-between items-center mb-2">
-                                          <h3 className="font-bold text-blue-300">運営生徒設定</h3>
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-xs">{showStudentWhite ? '現在: ホワイト(許可)' : '現在: ブラック(拒否)'}</span>
-                                            <button 
-                                                onClick={() => toggleListMode("student")} 
-                                                className="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded border border-gray-500"
-                                            >
-                                                モード切替
-                                            </button>
-                                          </div>
-                                      </div>
-                                      <p className="text-xs mb-4 text-gray-400">
-                                          {showStudentWhite 
-                                            ? "※ リストにいる人だけが管理画面に入れます" 
-                                            : "※ 基本全員OK (リストの人だけ拒否)"}
-                                      </p>
-
-                                      <button 
-                                        onClick={() => handleListUpdate("student", "add", configInputUserId)}
-                                        className={`w-full py-2 rounded font-bold mb-2 ${showStudentWhite ? 'bg-blue-600 text-white' : 'bg-purple-800 text-white'}`}
-                                      >
-                                          {showStudentWhite ? "ホワイトリストに追加" : "ブラックリストに追加(BAN)"}
-                                      </button>
-
-                                      {/* 救済ボタン (Whiteモードのみ) */}
-                                      {showStudentWhite && (
-                                          <button 
-                                            onClick={() => addAllUsersToWhiteList("student")}
-                                            className="w-full py-2 mb-4 bg-blue-900/50 border border-blue-500 text-blue-200 text-xs rounded hover:bg-blue-800"
-                                          >
-                                              ＋ 全ユーザーを一括許可 (救済)
-                                          </button>
-                                      )}
-
-                                      <ul className="text-sm space-y-1 max-h-40 overflow-y-auto bg-black/30 p-2 rounded">
-                                          {(showStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
-                                              <li key={uid} className="flex justify-between border-b border-gray-700 py-1">
-                                                  <span>{uid}</span>
-                                                  <button onClick={() => handleListUpdate("student", "remove", uid)} className="text-red-500 hover:text-red-300">削除</button>
-                                              </li>
-                                          ))}
-                                      </ul>
-                                  </div>
-                              </div>
-                          </div>
-                      )}
-                  </div>
-              )}
           </div>
-      </main>
+          <div className="text-xs text-gray-500 font-mono">MyID: {myUserId}</div>
+      </header>
 
-      {/* ================= モーダル: ユーザー詳細操作 ================= */}
+
+      {/* ========================================================================= */}
+      {/* タブ 1: 会場・予約管理 (旧 HackPage)                                    */}
+      {/* ========================================================================= */}
+      {activeTab === "venues" && (
+        <div className="flex flex-1 overflow-hidden">
+            {/* 左サイドバー */}
+            <aside className="w-1/4 min-w-[250px] border-r border-green-900 flex flex-col bg-gray-900/50">
+                <div className="p-4 border-b border-green-900">
+                    <h2 className="text-xs font-bold text-gray-400 mb-2 uppercase">Active User Selector</h2>
+                    <input 
+                        className="w-full bg-black text-white border border-gray-600 p-2 text-sm rounded outline-none focus:border-green-500"
+                        placeholder="Search ID..."
+                        value={userSearchQuery}
+                        onChange={e => setUserSearchQuery(e.target.value)}
+                    />
+                </div>
+                <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    {filteredSidebarIds.map(id => (
+                        <button key={id} onClick={() => selectUser(id)}
+                            className={`w-full text-left text-sm p-3 border-b border-gray-800 hover:bg-green-900/30 flex justify-between
+                            ${(targetStudentId === id || configInputUserId === id) ? "bg-green-900/50 text-white border-l-4 border-l-green-500" : "text-gray-300"}`}
+                        >
+                            <span>{id}</span>
+                        </button>
+                    ))}
+                </div>
+            </aside>
+
+            {/* 右メインコンテンツ */}
+            <main className="flex-1 overflow-y-auto p-6 relative">
+                {/* ユーザー操作パネル */}
+                <section className="mb-10 bg-blue-900/10 border border-blue-800 rounded p-6 shadow-lg shadow-blue-900/20">
+                    <h2 className="text-lg font-bold text-blue-400 mb-4">特定ユーザー操作</h2>
+                    <div className="flex gap-4">
+                        <input className="flex-1 bg-black border border-blue-500 text-white p-3 rounded text-xl font-mono" 
+                            placeholder="ID未選択" value={targetStudentId} onChange={(e) => setTargetStudentId(e.target.value.toUpperCase())}
+                        />
+                        <button onClick={fetchStudentData} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 rounded">詳細・操作</button>
+                    </div>
+                </section>
+
+                {/* 会場設定・緊急停止 */}
+                {!showVenueConfig && (
+                    <section className="animate-fade-in mb-10">
+                        <div className="border border-red-900/50 p-6 rounded bg-red-900/10 flex justify-between items-center">
+                            <div>
+                                <h2 className="text-xl font-bold text-red-500">⚠️ 全店舗 緊急操作</h2>
+                                <p className="text-sm text-gray-400">停止中: {attractions.filter(a => a.isPaused).length} 店舗</p>
+                            </div>
+                            <button onClick={() => toggleGlobalPause(attractions.every(a => a.isPaused))} className="bg-red-800 hover:bg-red-700 text-white font-bold px-6 py-3 rounded border border-red-500">
+                                {attractions.every(a => a.isPaused) ? "全店舗を一括再開" : "全店舗を緊急停止"}
+                            </button>
+                        </div>
+                    </section>
+                )}
+
+                {/* 会場リスト設定 */}
+                <div className="border-t border-gray-800 pt-6">
+                    <button onClick={() => setShowVenueConfig(!showVenueConfig)} className="w-full py-4 px-6 rounded bg-gray-900 border border-green-900 text-left flex justify-between items-center">
+                        <span className="text-xl font-bold text-green-400">🛠️ 会場設定 (リスト管理)</span>
+                        <span>{showVenueConfig ? "▲" : "▼"}</span>
+                    </button>
+
+                    {showVenueConfig && (
+                        <div className="mt-4 p-4 bg-gray-900 border border-gray-700 rounded animate-fade-in">
+                            {!selectedConfigShopId ? (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {attractions.map(shop => (
+                                        <button key={shop.id} onClick={() => setSelectedConfigShopId(shop.id)} className={`p-5 rounded border text-left hover:bg-gray-800 transition ${shop.isPaused ? 'border-red-500 bg-red-900/20' : 'border-gray-600 bg-black'}`}>
+                                            <div className="text-xl font-mono text-yellow-500 mb-1">{shop.id}</div>
+                                            <div className="font-bold text-white">{shop.name}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : targetShop && (
+                                <div>
+                                    <div className="flex items-center gap-4 mb-6 border-b border-gray-700 pb-4">
+                                        <button onClick={() => setSelectedConfigShopId(null)} className="px-3 py-1 bg-gray-800 rounded">← Back</button>
+                                        <h2 className="text-2xl font-bold text-white"><span className="text-yellow-400">{targetShop.id}</span> {targetShop.name}</h2>
+                                    </div>
+                                    <div className="flex justify-between items-center bg-black p-4 rounded border border-gray-600 mb-6">
+                                        <h3 className="font-bold text-white">受付ステータス</h3>
+                                        <button onClick={() => updateDoc(doc(db, "attractions", targetShop.id), { isPaused: !targetShop.isPaused })} 
+                                            className={`px-6 py-2 rounded font-bold ${targetShop.isPaused ? 'bg-red-600' : 'bg-green-600 text-black'}`}>
+                                            {targetShop.isPaused ? "停止中 (再開する)" : "稼働中 (停止する)"}
+                                        </button>
+                                    </div>
+                                    <div className="mb-4">
+                                        <label className="text-xs text-gray-500">リスト操作対象ID</label>
+                                        <input className="w-full bg-black text-white border border-green-500 p-2 rounded" placeholder="ID..." value={configInputUserId} onChange={e => setConfigInputUserId(e.target.value.toUpperCase())} />
+                                    </div>
+                                    <div className="grid md:grid-cols-2 gap-6">
+                                        {/* 一般客設定 */}
+                                        <div className={`p-4 rounded border ${showGuestWhite ? 'border-white bg-green-900/20' : 'border-gray-600 bg-black'}`}>
+                                            <div className="flex justify-between mb-2"><h3 className="font-bold">一般客設定</h3><button onClick={() => toggleListMode("guest")} className="text-xs bg-gray-700 px-2 rounded">モード切替</button></div>
+                                            <p className="text-xs text-gray-400 mb-2">{showGuestWhite ? "許可制 (WhiteList)" : "拒否制 (BlackList)"}</p>
+                                            <button onClick={() => handleListUpdate("guest", "add", configInputUserId)} className={`w-full py-2 rounded font-bold mb-2 ${showGuestWhite ? 'bg-green-700' : 'bg-red-900'}`}>追加</button>
+                                            {showGuestWhite && <button onClick={() => addAllUsersToWhiteList("guest")} className="w-full py-1 mb-2 bg-green-900/50 border border-green-500 text-xs">＋ 全員許可</button>}
+                                            <ul className="max-h-40 overflow-y-auto text-sm">{(showGuestWhite ? targetShop.allowedUsers : targetShop.bannedUsers)?.map((uid: string) => (
+                                                <li key={uid} className="flex justify-between border-b border-gray-700 py-1"><span>{uid}</span><button onClick={() => handleListUpdate("guest", "remove", uid)} className="text-red-500">Del</button></li>
+                                            ))}</ul>
+                                        </div>
+                                        {/* 生徒設定 */}
+                                        <div className={`p-4 rounded border ${showStudentWhite ? 'border-blue-400 bg-blue-900/10' : 'border-purple-900 bg-purple-900/10'}`}>
+                                            <div className="flex justify-between mb-2"><h3 className="font-bold text-blue-300">運営生徒設定</h3><button onClick={() => toggleListMode("student")} className="text-xs bg-gray-700 px-2 rounded">モード切替</button></div>
+                                            <p className="text-xs text-gray-400 mb-2">{showStudentWhite ? "許可制" : "拒否制"}</p>
+                                            <button onClick={() => handleListUpdate("student", "add", configInputUserId)} className={`w-full py-2 rounded font-bold mb-2 ${showStudentWhite ? 'bg-blue-600' : 'bg-purple-800'}`}>追加</button>
+                                            {showStudentWhite && <button onClick={() => addAllUsersToWhiteList("student")} className="w-full py-1 mb-2 bg-blue-900/50 border border-blue-500 text-xs">＋ 全員許可</button>}
+                                            <ul className="max-h-40 overflow-y-auto text-sm">{(showStudentWhite ? targetShop.adminAllowedUsers : targetShop.adminBannedUsers)?.map((uid: string) => (
+                                                <li key={uid} className="flex justify-between border-b border-gray-700 py-1"><span>{uid}</span><button onClick={() => handleListUpdate("student", "remove", uid)} className="text-red-500">Del</button></li>
+                                            ))}</ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </main>
+        </div>
+      )}
+
+
+      {/* ========================================================================= */}
+      {/* タブ 2: ユーザーデータベース管理 (New)                                  */}
+      {/* ========================================================================= */}
+      {activeTab === "users" && (
+          <div className="flex-1 overflow-y-auto p-6 bg-gray-900">
+              <div className="max-w-6xl mx-auto">
+                  <div className="bg-black border border-gray-700 rounded-xl overflow-hidden shadow-2xl">
+                      <div className="p-6 border-b border-gray-800 bg-gray-900/50">
+                          <h2 className="text-2xl font-bold text-white mb-2">User Database</h2>
+                          <p className="text-sm text-gray-400 mb-4">
+                              サイトを訪問した全ユーザーがここに記録されます。<br/>
+                              垢バンを行うと、そのユーザーは予約・管理画面へのアクセスが遮断されます。
+                          </p>
+                          <input 
+                              className="w-full bg-black border border-gray-600 rounded p-3 text-white focus:border-blue-500 outline-none"
+                              placeholder="ユーザーID または ニックネームで検索..."
+                              value={dbSearchQuery}
+                              onChange={(e) => setDbSearchQuery(e.target.value)}
+                          />
+                      </div>
+
+                      <div className="overflow-x-auto">
+                          <table className="w-full text-left text-sm text-gray-300">
+                              <thead className="bg-gray-800 text-xs uppercase text-gray-500 font-bold">
+                                  <tr>
+                                      <th className="px-6 py-4">User ID</th>
+                                      <th className="px-6 py-4">Nickname / Memo</th>
+                                      <th className="px-6 py-4 text-center">Pin</th>
+                                      <th className="px-6 py-4 text-center">Ban Status</th>
+                                      <th className="px-6 py-4 text-right">Actions</th>
+                                  </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-800">
+                                  {filteredDbUsers.map(user => (
+                                      <tr key={user.id} className={`hover:bg-gray-800/50 transition ${user.isBanned ? 'bg-red-900/10' : ''}`}>
+                                          <td className="px-6 py-4 font-mono font-bold text-yellow-400 text-lg">
+                                              {user.id}
+                                              {user.id === myUserId && <span className="ml-2 bg-green-600 text-black text-[10px] px-2 rounded">YOU</span>}
+                                          </td>
+                                          <td className="px-6 py-4">
+                                              <input 
+                                                  className="bg-transparent border-b border-gray-700 focus:border-blue-500 outline-none w-full text-white placeholder-gray-600 transition"
+                                                  placeholder="Add note..."
+                                                  value={user.nickname || ""}
+                                                  onChange={(e) => handleUpdateNickname(user.id, e.target.value)}
+                                              />
+                                          </td>
+                                          <td className="px-6 py-4 text-center">
+                                              <button onClick={() => togglePin(user)} className={`text-xl transition hover:scale-125 ${user.isPinned ? 'opacity-100' : 'opacity-20 hover:opacity-100'}`}>
+                                                  📌
+                                              </button>
+                                          </td>
+                                          <td className="px-6 py-4 text-center">
+                                              <button 
+                                                  onClick={() => toggleBan(user)} 
+                                                  className={`px-4 py-1 rounded text-xs font-bold transition border ${user.isBanned ? 'bg-red-600 border-red-500 text-white hover:bg-red-500' : 'bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:bg-gray-700'}`}
+                                              >
+                                                  {user.isBanned ? "BANNED" : "Active"}
+                                              </button>
+                                          </td>
+                                          <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                              <button onClick={() => wipeUserData(user.id)} className="bg-orange-900/50 hover:bg-orange-700 text-orange-200 border border-orange-800 px-3 py-1 rounded text-xs" title="全予約データを削除">
+                                                  全データ削除
+                                              </button>
+                                              <button onClick={() => deleteUserFromDb(user.id)} className="bg-gray-800 hover:bg-red-600 text-gray-400 hover:text-white px-3 py-1 rounded text-xs" title="DBから削除">
+                                                  🗑️
+                                              </button>
+                                          </td>
+                                      </tr>
+                                  ))}
+                                  {filteredDbUsers.length === 0 && (
+                                      <tr><td colSpan={5} className="px-6 py-10 text-center text-gray-500">ユーザーが見つかりません</td></tr>
+                                  )}
+                              </tbody>
+                          </table>
+                      </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+
+      {/* ================= モーダル (予約詳細) ================= */}
       {isModalOpen && (
-          <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 animate-fade-in">
               <div className="bg-gray-900 border border-green-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-2xl p-6">
                   <div className="flex justify-between items-center mb-6 border-b border-gray-700 pb-4">
                       <h2 className="text-2xl font-bold text-white">操作対象: <span className="text-yellow-400">{targetStudentId}</span></h2>
                       <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-white text-3xl">×</button>
                   </div>
-
-                  {/* 予約リスト */}
-                  <div className="mb-8">
-                      <h3 className="text-sm font-bold text-gray-400 mb-2">現在の予約状況</h3>
-                      <div className="space-y-2">
-                          {studentReservations.map((res, idx) => (
-                              <div key={idx} className="bg-black/50 border border-gray-600 p-3 rounded mb-2 flex justify-between items-center">
-                                  <div>
-                                      <div className="font-bold text-white">{res.shopName}</div>
-                                      <div className="text-xs text-gray-400 font-mono">
-                                          {res.time} 
-                                          <span className={`ml-2 ${res.status === 'used' ? 'text-gray-500' : 'text-green-400'}`}>
-                                              ({res.status === 'used' ? '使用済' : '予約中'})
-                                          </span>
-                                      </div>
-                                  </div>
-                                  <div className="flex gap-2">
-                                      {/* ステータス変更ボタン */}
-                                      <button 
-                                        onClick={() => forceToggleStatus(res, res.status === 'reserved' ? 'used' : 'reserved')} 
-                                        className="text-xs border border-blue-500 text-blue-400 px-2 py-1 rounded hover:bg-blue-900 transition"
-                                      >
-                                          {res.status === 'reserved' ? '使用済にする' : '予約に戻す'}
-                                      </button>
-                                      {/* 削除ボタン */}
-                                      <button 
-                                        onClick={() => forceDeleteReservation(res)} 
-                                        className="text-xs border border-red-500 text-red-400 px-2 py-1 rounded hover:bg-red-900 transition"
-                                      >
-                                          削除
-                                      </button>
-                                  </div>
+                  <div className="mb-8 space-y-2">
+                      <h3 className="text-sm font-bold text-gray-400 mb-2">現在の予約</h3>
+                      {studentReservations.length === 0 && <p className="text-gray-500 text-center py-4">予約なし</p>}
+                      {studentReservations.map((res, idx) => (
+                          <div key={idx} className="bg-black/50 border border-gray-600 p-3 rounded flex justify-between items-center">
+                              <div>
+                                  <div className="font-bold text-white">{res.shopName}</div>
+                                  <div className="text-xs text-green-400">{res.time} ({res.status})</div>
                               </div>
-                          ))}
-                          
-                          {studentReservations.length === 0 && (
-                            <p className="text-gray-500 text-center text-sm py-4">予約履歴はありません</p>
-                          )}
-                      </div>
+                              <div className="flex gap-2">
+                                  <button onClick={() => forceToggleStatus(res, res.status === 'reserved' ? 'used' : 'reserved')} className="text-xs border border-blue-500 text-blue-400 px-2 py-1 rounded">状態変更</button>
+                                  <button onClick={() => forceDeleteReservation(res)} className="text-xs border border-red-500 text-red-400 px-2 py-1 rounded">削除</button>
+                              </div>
+                          </div>
+                      ))}
                   </div>
-
-                  {/* --- 強制予約フォーム (管理者権限) --- */}
-                  <div className="border-t border-gray-700 pt-6 mt-6">
+                  <div className="border-t border-gray-700 pt-6">
                      <h3 className="text-lg font-bold text-white mb-4">強制予約追加</h3>
                      <div className="flex gap-4 mb-4">
-                        {/* 会場選択 */}
-                        <select 
-                          className="bg-black text-white border border-gray-600 p-2 rounded flex-1"
-                          value={addShopId}
-                          onChange={(e) => setAddShopId(e.target.value)}
-                        >
+                        <select className="bg-black text-white border border-gray-600 p-2 rounded flex-1" value={addShopId} onChange={(e) => setAddShopId(e.target.value)}>
                           <option value="">会場を選択...</option>
                           {attractions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
-                        
-                        {/* 時間選択 */}
-                        <select 
-                          className="bg-black text-white border border-gray-600 p-2 rounded flex-1"
-                          value={addTime}
-                          onChange={(e) => setAddTime(e.target.value)}
-                        >
+                        <select className="bg-black text-white border border-gray-600 p-2 rounded flex-1" value={addTime} onChange={(e) => setAddTime(e.target.value)}>
                           <option value="">時間を選択...</option>
                           {targetShopTimes.map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                      </div>
-                     <button 
-                       onClick={forceAddReservation} 
-                       className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded transition shadow-lg shadow-yellow-900/20"
-                     >
-                        ＋ このユーザーとして予約を追加
-                     </button>
+                     <button onClick={forceAddReservation} className="w-full bg-yellow-600 hover:bg-yellow-500 text-black font-bold py-3 rounded">＋ 追加</button>
                   </div>
-
               </div>
           </div>
       )}
