@@ -31,11 +31,9 @@ export default function AdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
     
-    // --- ★ここを修正: IDの取得と生成ロジック ---
+    // --- IDの取得と生成ロジック ---
     let stored = localStorage.getItem("bunkasai_user_id");
     
-    // もしローカルストレージにIDがなければ、ここで生成して保存する
-    // (予約画面と同じキー 'bunkasai_user_id' を使用することで同期されます)
     if (!stored) {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         let result = "";
@@ -55,17 +53,17 @@ export default function AdminPage() {
     return () => unsub();
   }, []);
 
+  // --- ★追加: 共通権限剥奪チェック関数 ---
+  const checkIsBanned = (shop: any) => {
+    if (shop?.adminBannedUsers?.includes(myUserId)) {
+        alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
+        return true; // Bannedである
+    }
+    return false; // Bannedではない
+  };
+
   // --- 権限チェック付き: 会場展開 ---
   const handleExpandShop = (shopId: string) => {
-      // ★追加: 垢バン（グローバルBAN）チェック
-      // どこか1つの会場でもBANリストに含まれていれば、全体のアカウント停止とみなす
-      const isAccountBanned = attractions.some(shop => shop.adminBannedUsers?.includes(myUserId));
-      
-      if (isAccountBanned) {
-          alert(`⛔ アカウント停止\nあなたのID (${myUserId}) はアカウント停止処分（垢バン）を受けているため、全ての会場の詳細を見る権限がありません。`);
-          return;
-      }
-
       const shop = attractions.find(s => s.id === shopId);
       if (!shop) return;
 
@@ -76,11 +74,8 @@ export default function AdminPage() {
           return;
       }
 
-      // 2. 編集権限剥奪チェック (念のため個別も残しますが、上の垢バンチェックで弾かれます)
-      if (shop.adminBannedUsers && shop.adminBannedUsers.includes(myUserId)) {
-          alert(`⛔ 権限エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の管理権限を剥奪されています。`);
-          return;
-      }
+      // 2. 編集権限剥奪チェック (閲覧もブロックする場合)
+      if (checkIsBanned(shop)) return;
 
       // 3. 制限モード（指名限定）チェック
       if (shop.isAdminRestricted) {
@@ -103,7 +98,7 @@ export default function AdminPage() {
 
   const startEdit = (shop: any) => {
     // 念のためここでも権限チェック
-    if (shop.adminBannedUsers?.includes(myUserId)) return alert("権限がありません");
+    if (checkIsBanned(shop)) return;
 
     setIsEditing(true);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
@@ -115,8 +110,14 @@ export default function AdminPage() {
   };
 
   const handleSave = async () => {
-    // ★変更点: 新規作成（編集モードでない）なら弾く
+    // 新規作成（編集モードでない）なら弾く
     if (!isEditing) return alert("新規会場の作成は無効化されています。");
+
+    // 現在の会場データを取得
+    const currentShop = attractions.find(s => s.id === manualId);
+    
+    // ★追加: 保存実行時の権限剥奪チェック
+    if (currentShop && checkIsBanned(currentShop)) return;
 
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
     if (password.length !== 5) return alert("パスワードは5桁です");
@@ -125,7 +126,6 @@ export default function AdminPage() {
     let shouldResetSlots = true;
 
     // 編集モードで時間が変わっていない場合は予約枠を維持
-    const currentShop = attractions.find(s => s.id === manualId);
     if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
         slots = currentShop.slots;
         shouldResetSlots = false;
@@ -158,6 +158,11 @@ export default function AdminPage() {
   };
 
   const handleDeleteVenue = async (id: string) => {
+    const shop = attractions.find(s => s.id === id);
+    
+    // ★追加: 削除実行時の権限剥奪チェック
+    if (shop && checkIsBanned(shop)) return;
+
     if (!confirm("本当に会場を削除しますか？")) return;
     await deleteDoc(doc(db, "attractions", id));
     setExpandedShopId(null);
@@ -167,6 +172,9 @@ export default function AdminPage() {
 
   // ステータス変更 (予約中 <-> 入場済)
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
+     // ★追加: 操作時の権限剥奪チェック
+     if (checkIsBanned(shop)) return;
+
      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
 
      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
@@ -179,6 +187,9 @@ export default function AdminPage() {
 
   // 予約キャンセル
   const cancelReservation = async (shop: any, res: any) => {
+      // ★追加: 操作時の権限剥奪チェック
+      if (checkIsBanned(shop)) return;
+
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
 
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
@@ -226,9 +237,8 @@ export default function AdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         {/* ヘッダーエリア */}
         <div className="mb-6 border-b border-gray-700 pb-4">
-            <h1 className="text-2xl font-bold text-white mb-4">全店舗統合管理</h1>
+            <h1 className="text-2xl font-bold text-white mb-4">予約管理</h1>
             
-            {/* ★変更点: 編集時のみフォームを表示、新規作成機能は非表示にする */}
             {isEditing ? (
                 <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in shadow-lg shadow-blue-900/20">
                     <h3 className="text-sm font-bold mb-4 text-blue-300 flex items-center gap-2">
@@ -440,3 +450,5 @@ export default function AdminPage() {
     </div>
   );
 }
+
+
