@@ -203,7 +203,7 @@ export default function Home() {
     <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20">
       <header className="mb-6">
         <div className="flex justify-between items-center mb-2">
-           <h1 className="text-xl font-bold text-blue-900">予約システム</h1>
+           <h1 className="text-xl font-bold text-blue-900">文化祭予約システム</h1>
            <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
                予約: {activeTickets.length}/3
            </div>
@@ -327,3 +327,5 @@ export default function Home() {
     </div>
   );
 }
+
+
