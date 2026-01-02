@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+// ★修正: usersコレクションを監視するため doc, onSnapshot を使用します（既存のimportに含まれています）
 import { db, auth } from "../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -9,6 +10,9 @@ export default function AdminPage() {
   
   // 自分のID（権限チェック・表示用）
   const [myUserId, setMyUserId] = useState("");
+
+  // ★追加: アカウント停止（BAN）状態管理
+  const [isGlobalBanned, setIsGlobalBanned] = useState(false);
 
   // 表示モード管理
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); // 現在開いている会場ID
@@ -47,19 +51,57 @@ export default function AdminPage() {
     setMyUserId(stored);
     // ------------------------------------------
 
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
+    // 1. 会場データの監視
+    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    return () => unsub();
+
+    // ★追加: 2. 自分のユーザーBAN状態をリアルタイム監視
+    // usersコレクションの自分のIDのドキュメントを監視します
+    const unsubUser = onSnapshot(doc(db, "users", stored), (docSnap) => {
+        if (docSnap.exists()) {
+            const userData = docSnap.data();
+            // isBannedがtrueならBAN状態にする
+            setIsGlobalBanned(!!userData.isBanned);
+        } else {
+            // ドキュメントがない場合はBANされていないとみなす（または必要に応じて作成）
+            setIsGlobalBanned(false);
+        }
+    });
+
+    return () => {
+        unsubAttractions();
+        unsubUser(); // ★クリーンアップに追加
+    };
   }, []);
 
-  // --- ★追加: 共通権限剥奪チェック関数 ---
+  // --- ★追加: 強制BAN画面 ---
+  // isGlobalBanned が true の場合、強制的にこの画面を返し、他の操作を一切不能にします
+  if (isGlobalBanned) {
+      return (
+          <div className="min-h-screen bg-black text-red-600 font-sans flex flex-col items-center justify-center p-6 text-center animate-fade-in">
+              <div className="text-6xl mb-4">🚫</div>
+              <h1 className="text-3xl font-bold mb-2">ACCESS DENIED</h1>
+              <p className="text-white text-lg mb-6">
+                  このアカウントは管理者により凍結されました。<br/>
+                  すべての操作が無効化されています。
+              </p>
+              <div className="bg-gray-900 border border-gray-700 p-4 rounded text-sm text-gray-400 font-mono">
+                  User ID: <span className="text-yellow-500">{myUserId}</span>
+              </div>
+          </div>
+      );
+  }
+
+  // --- 以下、既存のロジック ---
+
+  // 共通権限剥奪チェック関数 (会場ごとのBAN用 - 今回の全体BANとは別ですが維持します)
   const checkIsBanned = (shop: any) => {
     if (shop?.adminBannedUsers?.includes(myUserId)) {
         alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
-        return true; // Bannedである
+        return true; 
     }
-    return false; // Bannedではない
+    return false; 
   };
 
   // --- 権限チェック付き: 会場展開 ---
@@ -74,10 +116,10 @@ export default function AdminPage() {
           return;
       }
 
-      // 2. 編集権限剥奪チェック (閲覧もブロックする場合)
+      // 2. 編集権限剥奪チェック
       if (checkIsBanned(shop)) return;
 
-      // 3. 制限モード（指名限定）チェック
+      // 3. 制限モードチェック
       if (shop.isAdminRestricted) {
           if (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId)) {
               alert(`🔒 アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
@@ -97,7 +139,6 @@ export default function AdminPage() {
   };
 
   const startEdit = (shop: any) => {
-    // 念のためここでも権限チェック
     if (checkIsBanned(shop)) return;
 
     setIsEditing(true);
@@ -105,18 +146,14 @@ export default function AdminPage() {
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
-    // フォームまでスクロール
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSave = async () => {
-    // 新規作成（編集モードでない）なら弾く
     if (!isEditing) return alert("新規会場の作成は無効化されています。");
 
-    // 現在の会場データを取得
     const currentShop = attractions.find(s => s.id === manualId);
     
-    // ★追加: 保存実行時の権限剥奪チェック
     if (currentShop && checkIsBanned(currentShop)) return;
 
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
@@ -125,7 +162,6 @@ export default function AdminPage() {
     let slots: any = {};
     let shouldResetSlots = true;
 
-    // 編集モードで時間が変わっていない場合は予約枠を維持
     if (currentShop && currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
         slots = currentShop.slots;
         shouldResetSlots = false;
@@ -149,18 +185,15 @@ export default function AdminPage() {
       openTime, closeTime, duration, capacity, isPaused, slots
     };
 
-    // setDoc merge:true なので既存データを維持しつつ更新
     await setDoc(doc(db, "attractions", manualId), data, { merge: true });
     
     alert("更新しました");
-    setExpandedShopId(manualId); // 編集後はその詳細を表示
-    resetForm(); // フォームを閉じる
+    setExpandedShopId(manualId);
+    resetForm(); 
   };
 
   const handleDeleteVenue = async (id: string) => {
     const shop = attractions.find(s => s.id === id);
-    
-    // ★追加: 削除実行時の権限剥奪チェック
     if (shop && checkIsBanned(shop)) return;
 
     if (!confirm("本当に会場を削除しますか？")) return;
@@ -169,31 +202,25 @@ export default function AdminPage() {
   };
 
   // --- 予約操作関連 (個別) ---
-
-  // ステータス変更 (予約中 <-> 入場済)
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
-     // ★追加: 操作時の権限剥奪チェック
-     if (checkIsBanned(shop)) return;
+      if (checkIsBanned(shop)) return;
 
-     if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
+      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
 
-     const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-     const updatedRes = { ...res, status: newStatus };
+      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
+      const updatedRes = { ...res, status: newStatus };
 
-     await updateDoc(doc(db, "attractions", shop.id), {
-         reservations: [...otherRes, updatedRes]
-     });
+      await updateDoc(doc(db, "attractions", shop.id), {
+          reservations: [...otherRes, updatedRes]
+      });
   };
 
-  // 予約キャンセル
   const cancelReservation = async (shop: any, res: any) => {
-      // ★追加: 操作時の権限剥奪チェック
       if (checkIsBanned(shop)) return;
 
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
 
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-      // カウントを戻す（入場済みだったとしても、枠を空けるなら戻す）
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
 
       await updateDoc(doc(db, "attractions", shop.id), {
@@ -205,14 +232,11 @@ export default function AdminPage() {
   // --- 表示用ヘルパー ---
   const targetShop = attractions.find(s => s.id === expandedShopId);
 
-  // 時間ごとに予約者をグループ化する関数
   const getReservationsByTime = (shop: any) => {
       const grouped: any = {};
-      // まず枠を作成
       Object.keys(shop.slots || {}).sort().forEach(time => {
           grouped[time] = [];
       });
-      // 予約を入れる
       if(shop.reservations) {
           shop.reservations.forEach((res: any) => {
               if(grouped[res.time]) {
@@ -248,19 +272,16 @@ export default function AdminPage() {
                     </h3>
                     
                     <div className="grid gap-2 md:grid-cols-3 mb-2">
-                        {/* ID入力 (編集時は無効化) */}
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">ID (変更不可)</label>
                             <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" value={manualId} />
                         </div>
                         
-                        {/* 名前入力 */}
                          <div className="flex flex-col">
                             <label className="text-xs text-gray-500">会場名</label>
                             <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                         </div>
                         
-                        {/* パスワード入力 (変更不可) */}
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">パスワード (変更不可)</label>
                             <input 
@@ -450,5 +471,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-
