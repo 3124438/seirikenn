@@ -1,6 +1,5 @@
 "use client";
 import { useState, useEffect } from "react";
-// ★修正: usersコレクションを監視するため doc, onSnapshot を使用します
 import { db, auth } from "../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -11,7 +10,7 @@ export default function AdminPage() {
   // 自分のID（権限チェック・表示用）
   const [myUserId, setMyUserId] = useState("");
 
-  // ★追加: アカウント停止（BAN）状態管理
+  // アカウント停止（BAN）状態管理
   const [isGlobalBanned, setIsGlobalBanned] = useState(false);
 
   // 表示モード管理
@@ -56,27 +55,23 @@ export default function AdminPage() {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // ★追加: 2. 自分のユーザーBAN状態をリアルタイム監視
-    // usersコレクションの自分のIDのドキュメントを監視します
+    // 2. 自分のユーザーBAN状態をリアルタイム監視
     const unsubUser = onSnapshot(doc(db, "users", stored), (docSnap) => {
         if (docSnap.exists()) {
             const userData = docSnap.data();
-            // isBannedがtrueならBAN状態にする
             setIsGlobalBanned(!!userData.isBanned);
         } else {
-            // ドキュメントがない場合はBANされていないとみなす
             setIsGlobalBanned(false);
         }
     });
 
     return () => {
         unsubAttractions();
-        unsubUser(); // ★クリーンアップに追加
+        unsubUser();
     };
   }, []);
 
-  // --- ★追加: 強制BAN画面 ---
-  // isGlobalBanned が true の場合、強制的にこの画面を返し、他の操作を一切不能にします
+  // --- 強制BAN画面 ---
   if (isGlobalBanned) {
       return (
           <div className="min-h-screen bg-black text-red-600 font-sans flex flex-col items-center justify-center p-6 text-center animate-fade-in">
@@ -95,7 +90,7 @@ export default function AdminPage() {
 
   // --- 以下、既存のロジック ---
 
-  // 共通権限剥奪チェック関数 (会場ごとのBAN用)
+  // 共通権限剥奪チェック関数
   const checkIsBanned = (shop: any) => {
     if (shop?.adminBannedUsers?.includes(myUserId)) {
         alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
@@ -116,10 +111,20 @@ export default function AdminPage() {
           return;
       }
 
-      // 2. 編集権限剥奪チェック
+      // 2. 編集権限剥奪チェック (Blacklist)
       if (checkIsBanned(shop)) return;
 
-      // 3. 制限モードチェック
+      // ★追加: 3. ホワイトリスト (Whitelist) チェック
+      // Firestoreに 'whitelist' フィールド(配列)があり、かつ中身が空でない場合、
+      // 自分のIDが含まれていなければアクセスを拒否します。
+      if (shop.whitelist && Array.isArray(shop.whitelist) && shop.whitelist.length > 0) {
+          if (!shop.whitelist.includes(myUserId)) {
+              alert(`🔒 アクセス制限\nこの会場はホワイトリスト制です。\nあなたのID (${myUserId}) は許可リストに含まれていません。`);
+              return;
+          }
+      }
+
+      // 4. 旧・制限モードチェック (互換性のため維持、または統合可能)
       if (shop.isAdminRestricted) {
           if (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId)) {
               alert(`🔒 アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
@@ -250,7 +255,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
       
-      {/* ユーザーID表示バー (最上部) */}
+      {/* ユーザーID表示バー */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
           <div className="text-xs text-gray-400">Logged in as:</div>
           <div className="font-mono font-bold text-yellow-400 text-lg tracking-wider">
@@ -261,7 +266,7 @@ export default function AdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         {/* ヘッダーエリア */}
         <div className="mb-6 border-b border-gray-700 pb-4">
-            <h1 className="text-2xl font-bold text-white mb-4">予約管理画面</h1>
+            <h1 className="text-2xl font-bold text-white mb-4">予約管理</h1>
             
             {isEditing ? (
                 <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in shadow-lg shadow-blue-900/20">
@@ -355,24 +360,26 @@ export default function AdminPage() {
 
         {/* --- メインエリア --- */}
 
-        {/* 1. 一覧モード（詳細が開かれていない時） */}
+        {/* 1. 一覧モード */}
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
-                    // 検索フィルター
                     const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
-                    
+                    // ホワイトリストがある場合、鍵アイコンを表示するか判定用
+                    const isWhiteListOnly = shop.whitelist && Array.isArray(shop.whitelist) && shop.whitelist.length > 0;
+
                     return (
                         <button 
                             key={shop.id} 
-                            onClick={() => handleExpandShop(shop.id)} // クリック時にパスワード＆権限チェック
-                            className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800
+                            onClick={() => handleExpandShop(shop.id)}
+                            className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800 relative
                                 ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}
                             `}
                         >
                             <div>
                                 <div className="flex items-center gap-2">
                                     <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
+                                    {isWhiteListOnly && <span className="text-xs bg-gray-600 text-gray-300 px-1 rounded border border-gray-500">🔒限定</span>}
                                 </div>
                                 <span className="font-bold text-lg">{shop.name}</span>
                                 {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
@@ -386,7 +393,7 @@ export default function AdminPage() {
             </div>
         )}
 
-        {/* 2. 詳細モード（会場が選択された時） */}
+        {/* 2. 詳細モード */}
         {expandedShopId && targetShop && (
             <div className="animate-fade-in">
                 {/* 戻るヘッダー */}
@@ -410,7 +417,7 @@ export default function AdminPage() {
                         </div>
                     </div>
 
-                    {/* 予約リスト（時間ごと） */}
+                    {/* 予約リスト */}
                     <div className="p-4 space-y-6">
                         {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
                             const slotCount = targetShop.slots[time] || 0;
@@ -471,5 +478,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
-
