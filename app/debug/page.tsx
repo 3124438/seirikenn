@@ -1,4 +1,4 @@
-// ＃生徒用管理画面
+// ＃生徒用管理画面 (app/debug/page.tsx など)
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
