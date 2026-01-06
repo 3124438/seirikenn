@@ -89,13 +89,28 @@ export default function AdminPage() {
       );
   }
 
-  // 共通権限剥奪チェック関数 (会場ごとのBAN用)
-  const checkIsBanned = (shop: any) => {
-    if (shop?.adminBannedUsers?.includes(myUserId)) {
-        alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
-        return true; 
-    }
-    return false; 
+  // --- 権限チェックヘルパー関数 ---
+  
+  // 1. ブラックリスト判定 (trueならBANされている)
+  const isUserBlacklisted = (shop: any) => {
+      return shop?.adminBannedUsers?.includes(myUserId);
+  };
+
+  // 2. ホワイトリスト判定 (trueなら許可されていない)
+  const isUserNotWhitelisted = (shop: any) => {
+      // ホワイトリストモード(isRestricted)かつ、許可リスト(allowedUsers)に含まれていない場合
+      if (shop.isRestricted) {
+          return !shop.allowedUsers?.includes(myUserId);
+      }
+      return false;
+  };
+
+  // 3. 管理者限定モード判定 (trueなら許可されていない)
+  const isAdminRestrictedAndNotAllowed = (shop: any) => {
+      if (shop.isAdminRestricted) {
+          return !shop.adminAllowedUsers?.includes(myUserId);
+      }
+      return false;
   };
 
   // --- 権限チェック付き: 会場展開 ---
@@ -103,31 +118,28 @@ export default function AdminPage() {
       const shop = attractions.find(s => s.id === shopId);
       if (!shop) return;
 
-      // 1. パスワード認証 (入室前に必ず確認)
+      // --- 入室不可チェック ---
+      if (isUserBlacklisted(shop)) {
+          alert(`⛔ アクセス拒否\nあなたのIDは、この会場のブラックリストに含まれているため操作できません。`);
+          return;
+      }
+
+      if (isUserNotWhitelisted(shop)) {
+          alert(`🔒 アクセス制限\nこの会場は「ホワイトリスト（許可制）」です。\nあなたのIDは許可リストに入っていません。`);
+          return;
+      }
+
+      if (isAdminRestrictedAndNotAllowed(shop)) {
+          alert(`🔒 管理者制限\nこの会場は「指名スタッフ限定モード」です。\nアクセス権限がありません。`);
+          return;
+      }
+      // ----------------------
+
+      // パスワード認証 (入室前に必ず確認)
       const inputPass = prompt(`「${shop.name}」の管理用パスワードを入力してください`);
       if (inputPass !== shop.password) {
           alert("パスワードが違います");
           return;
-      }
-
-      // 2. 編集権限剥奪チェック (ブラックリスト)
-      if (checkIsBanned(shop)) return;
-
-      // ★追加: 3. ホワイトリスト（入場制限）チェック
-      // isRestricted が true の場合、allowedUsers に含まれていないユーザーは弾く
-      if (shop.isRestricted) {
-        if (!shop.allowedUsers || !shop.allowedUsers.includes(myUserId)) {
-             alert(`🔒 アクセス制限\nこの会場は「ホワイトリスト（許可制）」です。\nあなたのID (${myUserId}) は許可リストに入っていません。`);
-             return;
-        }
-      }
-
-      // 4. 管理者専用制限モードチェック
-      if (shop.isAdminRestricted) {
-          if (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId)) {
-              alert(`🔒 管理者アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
-              return;
-          }
       }
 
       setExpandedShopId(shopId);
@@ -142,7 +154,8 @@ export default function AdminPage() {
   };
 
   const startEdit = (shop: any) => {
-    if (checkIsBanned(shop)) return;
+    // 編集時も権限チェック
+    if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
     setIsEditing(true);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
@@ -157,7 +170,10 @@ export default function AdminPage() {
 
     const currentShop = attractions.find(s => s.id === manualId);
     
-    if (currentShop && checkIsBanned(currentShop)) return;
+    // 保存時も権限チェック
+    if (currentShop && (isUserBlacklisted(currentShop) || isUserNotWhitelisted(currentShop))) {
+        return alert("権限がないため保存できません。");
+    }
 
     if (!manualId || !newName || !password) return alert("必須項目を入力してください");
     if (password.length !== 5) return alert("パスワードは5桁です");
@@ -197,7 +213,7 @@ export default function AdminPage() {
 
   const handleDeleteVenue = async (id: string) => {
     const shop = attractions.find(s => s.id === id);
-    if (shop && checkIsBanned(shop)) return;
+    if (shop && (isUserBlacklisted(shop) || isUserNotWhitelisted(shop))) return;
 
     if (!confirm("本当に会場を削除しますか？")) return;
     await deleteDoc(doc(db, "attractions", id));
@@ -206,7 +222,7 @@ export default function AdminPage() {
 
   // --- 予約操作関連 (個別) ---
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
-      if (checkIsBanned(shop)) return;
+      if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
       if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消して予約状態に戻しますか？")) return;
 
@@ -219,7 +235,7 @@ export default function AdminPage() {
   };
 
   const cancelReservation = async (shop: any, res: any) => {
-      if (checkIsBanned(shop)) return;
+      if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
 
@@ -264,7 +280,7 @@ export default function AdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         {/* ヘッダーエリア */}
         <div className="mb-6 border-b border-gray-700 pb-4">
-            <h1 className="text-2xl font-bold text-white mb-4">予約管理画面</h1>
+            <h1 className="text-2xl font-bold text-white mb-4">予約管理</h1>
             
             {isEditing ? (
                 <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in shadow-lg shadow-blue-900/20">
@@ -274,29 +290,21 @@ export default function AdminPage() {
                         <span>{newName}</span>
                     </h3>
                     
+                    {/* 編集フォーム（省略なし） */}
                     <div className="grid gap-2 md:grid-cols-3 mb-2">
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">ID (変更不可)</label>
                             <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" value={manualId} />
                         </div>
-                        
-                         <div className="flex flex-col">
+                        <div className="flex flex-col">
                             <label className="text-xs text-gray-500">会場名</label>
                             <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                         </div>
-                        
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">パスワード (変更不可)</label>
-                            <input 
-                                disabled 
-                                className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" 
-                                placeholder="変更不可" 
-                                maxLength={5} 
-                                value={password} 
-                            />
+                            <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" placeholder="変更不可" maxLength={5} value={password} />
                         </div>
                     </div>
-                    
                     <div className="grid grid-cols-4 gap-2 mb-2">
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">開始</label>
@@ -318,20 +326,16 @@ export default function AdminPage() {
                     <div className="flex items-center gap-3 mb-6 p-2 bg-gray-900 rounded">
                         <label className="text-xs text-gray-400">1組の最大人数:</label>
                         <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
-                        
                         <div className="w-px h-4 bg-gray-600 mx-2"></div>
-
                         <label className="text-xs text-white flex items-center gap-2 cursor-pointer font-bold">
                             <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} className="w-4 h-4" />
                             <span className={isPaused ? "text-red-500" : "text-gray-400"}>受付を緊急停止する</span>
                         </label>
                     </div>
-
                     <div className="flex gap-2">
                         <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded font-bold transition shadow-lg shadow-blue-900/40">変更を保存</button>
                         <button onClick={resetForm} className="bg-gray-700 hover:bg-gray-600 px-6 rounded text-sm transition">キャンセル</button>
                     </div>
-                    <p className="text-xs text-gray-500 mt-2 text-center">※IDとパスワードの変更にはデータベースの直接操作が必要です。</p>
                 </div>
             ) : (
                 <div className="bg-gray-800/50 rounded p-3 mb-4 border border-gray-700 text-center text-xs text-gray-500">
@@ -362,31 +366,51 @@ export default function AdminPage() {
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
-                    // 検索フィルター
                     const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                     
-                    // ★追加: 自分がホワイトリストに入っているか確認（表示用）
-                    const isAllowed = !shop.isRestricted || (shop.allowedUsers && shop.allowedUsers.includes(myUserId));
+                    // ★修正: 入室不可状態のチェック
+                    const blacklisted = isUserBlacklisted(shop);     // ブラックリストに入っている
+                    const notWhitelisted = isUserNotWhitelisted(shop); // ホワイトリストモードなのにリストにいない
+                    const adminRestricted = isAdminRestrictedAndNotAllowed(shop); // 管理者モード制限
+
+                    const isLocked = blacklisted || notWhitelisted || adminRestricted;
 
                     return (
                         <button 
                             key={shop.id} 
-                            onClick={() => handleExpandShop(shop.id)} // クリック時にパスワード＆権限チェック
+                            onClick={() => handleExpandShop(shop.id)} 
                             className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800 relative
                                 ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}
-                                ${!isAllowed ? 'opacity-75 grayscale-[0.5]' : ''}
+                                ${isLocked ? 'opacity-70 bg-gray-900' : ''}
                             `}
                         >
                             <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2 mb-1">
                                     <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
-                                    {/* ホワイトリスト制限のアイコン表示 */}
-                                    {shop.isRestricted && (
-                                        <span title="入場制限中" className="text-sm bg-gray-700 text-gray-300 px-1.5 rounded">🔒 制限中</span>
+                                    
+                                    {/* ★修正: 状態表示（右側に表示） */}
+                                    {blacklisted && (
+                                        <span className="text-xs bg-red-900 text-red-200 border border-red-700 px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                                            ⛔ BAN指定
+                                        </span>
+                                    )}
+                                    {notWhitelisted && (
+                                        <span className="text-xs bg-gray-700 text-gray-300 border border-gray-500 px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                                            🔒 許可外
+                                        </span>
+                                    )}
+                                    {/* (おまけ) 管理者制限の場合 */}
+                                    {(!blacklisted && !notWhitelisted && adminRestricted) && (
+                                        <span className="text-xs bg-purple-900 text-purple-200 border border-purple-700 px-2 py-0.5 rounded font-bold flex items-center gap-1">
+                                            🛡️ スタッフ限
+                                        </span>
                                     )}
                                 </div>
-                                <span className="font-bold text-lg">{shop.name}</span>
-                                {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+
+                                <div className="flex items-center gap-2">
+                                    <span className="font-bold text-lg">{shop.name}</span>
+                                    {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                                </div>
                             </div>
                             <div className="text-gray-400 text-2xl">
                                 ›
@@ -482,4 +506,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
