@@ -224,7 +224,7 @@ export default function Home() {
               <div className="flex justify-between items-center mb-3">
                 <div>
                     <h2 className="font-bold text-lg flex items-center">
-                        <span className="text-blue-600 font-mono mr-2 text-xl">{t.shopId}</span>
+                        {/* ID削除: 名前のみ表示 */}
                         {t.shopName}
                     </h2>
                     <p className="text-3xl font-bold text-blue-600 font-mono">{t.time}</p>
@@ -255,10 +255,8 @@ export default function Home() {
                   {shop.imageUrl ? (
                       <img src={shop.imageUrl} alt="" className="w-full h-full object-cover" />
                   ) : (
-                      <div className="w-full h-full flex items-center justify-center text-2xl">🎪</div>
+                      <div className="w-full h-full flex items-center justify-center text-2xl"></div>
                   )}
-                  {/* 定員オーバーなどの簡易バッジ */}
-                  {/* 必要であればここに残り数などをオーバーレイ表示できます */}
               </div>
 
               {/* テキスト情報エリア */}
@@ -274,7 +272,7 @@ export default function Home() {
                   </div>
                   
                   <h3 className="font-bold text-lg leading-tight truncate text-gray-800 mb-1">
-                      <span className="text-yellow-600 font-mono text-sm mr-1">{shop.id}</span>
+                      {/* ID削除: 名前のみ表示 */}
                       {shop.name}
                   </h3>
                   
@@ -311,8 +309,8 @@ export default function Home() {
                             {selectedShop.department}
                         </span>
                     )}
-                    <h2 className="text-2xl font-bold flex items-center gap-2 leading-tight">
-                        <span className={`${selectedShop.imageUrl ? "text-yellow-400" : "text-yellow-600"} font-mono`}>{selectedShop.id}</span>
+                    <h2 className="text-2xl font-bold leading-tight">
+                        {/* ID削除: 名前のみ表示 */}
                         {selectedShop.name}
                     </h2>
                 </div>
@@ -384,7 +382,7 @@ export default function Home() {
                         <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
                             <div>
                                 <h2 className="font-bold text-sm text-gray-600 flex items-center">
-                                    <span className="text-gray-400 font-mono mr-2">{t.shopId}</span>
+                                    {/* ID削除: 名前のみ表示 */}
                                     {t.shopName}
                                 </h2>
                                 <p className="text-sm font-bold text-gray-500">{t.time}</p>
