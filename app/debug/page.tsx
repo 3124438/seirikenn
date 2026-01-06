@@ -1,3 +1,4 @@
+// ＃生徒用管理画面
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
@@ -88,9 +89,7 @@ export default function AdminPage() {
       );
   }
 
-  // --- 以下、既存のロジック ---
-
-  // 共通権限剥奪チェック関数
+  // 共通権限剥奪チェック関数 (会場ごとのBAN用)
   const checkIsBanned = (shop: any) => {
     if (shop?.adminBannedUsers?.includes(myUserId)) {
         alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
@@ -111,23 +110,22 @@ export default function AdminPage() {
           return;
       }
 
-      // 2. 編集権限剥奪チェック (Blacklist)
+      // 2. 編集権限剥奪チェック (ブラックリスト)
       if (checkIsBanned(shop)) return;
 
-      // ★追加: 3. ホワイトリスト (Whitelist) チェック
-      // Firestoreに 'whitelist' フィールド(配列)があり、かつ中身が空でない場合、
-      // 自分のIDが含まれていなければアクセスを拒否します。
-      if (shop.whitelist && Array.isArray(shop.whitelist) && shop.whitelist.length > 0) {
-          if (!shop.whitelist.includes(myUserId)) {
-              alert(`🔒 アクセス制限\nこの会場はホワイトリスト制です。\nあなたのID (${myUserId}) は許可リストに含まれていません。`);
-              return;
-          }
+      // ★追加: 3. ホワイトリスト（入場制限）チェック
+      // isRestricted が true の場合、allowedUsers に含まれていないユーザーは弾く
+      if (shop.isRestricted) {
+        if (!shop.allowedUsers || !shop.allowedUsers.includes(myUserId)) {
+             alert(`🔒 アクセス制限\nこの会場は「ホワイトリスト（許可制）」です。\nあなたのID (${myUserId}) は許可リストに入っていません。`);
+             return;
+        }
       }
 
-      // 4. 旧・制限モードチェック (互換性のため維持、または統合可能)
+      // 4. 管理者専用制限モードチェック
       if (shop.isAdminRestricted) {
           if (!shop.adminAllowedUsers || !shop.adminAllowedUsers.includes(myUserId)) {
-              alert(`🔒 アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
+              alert(`🔒 管理者アクセス制限\nこの会場は「指名スタッフ限定モード」です。\nあなたのIDは許可リストに入っていません。`);
               return;
           }
       }
@@ -255,7 +253,7 @@ export default function AdminPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
       
-      {/* ユーザーID表示バー */}
+      {/* ユーザーID表示バー (最上部) */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
           <div className="text-xs text-gray-400">Logged in as:</div>
           <div className="font-mono font-bold text-yellow-400 text-lg tracking-wider">
@@ -360,26 +358,32 @@ export default function AdminPage() {
 
         {/* --- メインエリア --- */}
 
-        {/* 1. 一覧モード */}
+        {/* 1. 一覧モード（詳細が開かれていない時） */}
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
+                    // 検索フィルター
                     const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
-                    // ホワイトリストがある場合、鍵アイコンを表示するか判定用
-                    const isWhiteListOnly = shop.whitelist && Array.isArray(shop.whitelist) && shop.whitelist.length > 0;
+                    
+                    // ★追加: 自分がホワイトリストに入っているか確認（表示用）
+                    const isAllowed = !shop.isRestricted || (shop.allowedUsers && shop.allowedUsers.includes(myUserId));
 
                     return (
                         <button 
                             key={shop.id} 
-                            onClick={() => handleExpandShop(shop.id)}
+                            onClick={() => handleExpandShop(shop.id)} // クリック時にパスワード＆権限チェック
                             className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800 relative
                                 ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}
+                                ${!isAllowed ? 'opacity-75 grayscale-[0.5]' : ''}
                             `}
                         >
                             <div>
                                 <div className="flex items-center gap-2">
                                     <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
-                                    {isWhiteListOnly && <span className="text-xs bg-gray-600 text-gray-300 px-1 rounded border border-gray-500">🔒限定</span>}
+                                    {/* ホワイトリスト制限のアイコン表示 */}
+                                    {shop.isRestricted && (
+                                        <span title="入場制限中" className="text-sm bg-gray-700 text-gray-300 px-1.5 rounded">🔒 制限中</span>
+                                    )}
                                 </div>
                                 <span className="font-bold text-lg">{shop.name}</span>
                                 {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
@@ -393,7 +397,7 @@ export default function AdminPage() {
             </div>
         )}
 
-        {/* 2. 詳細モード */}
+        {/* 2. 詳細モード（会場が選択された時） */}
         {expandedShopId && targetShop && (
             <div className="animate-fade-in">
                 {/* 戻るヘッダー */}
@@ -417,7 +421,7 @@ export default function AdminPage() {
                         </div>
                     </div>
 
-                    {/* 予約リスト */}
+                    {/* 予約リスト（時間ごと） */}
                     <div className="p-4 space-y-6">
                         {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
                             const slotCount = targetShop.slots[time] || 0;
