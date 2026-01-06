@@ -323,10 +323,13 @@ export default function AdminPage() {
                             <label className="text-xs text-gray-500">会場名</label>
                             <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
                              <div className="flex flex-col">
-                                <label className="text-xs text-gray-500">団体・クラス名</label>
-                                <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="例: 3年A組" value={department} onChange={e => setDepartment(e.target.value)} />
+                                 <label className="text-xs text-gray-500">団体・クラス名 (変更不可)</label>
+                                 <input 
+                                     disabled 
+                                     className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed border border-gray-600" 
+                                     value={department} 
+                                 />
                              </div>
                              <div className="flex flex-col">
                                 <label className="text-xs text-gray-500">画像URL</label>
