@@ -1,4 +1,4 @@
-// ＃生徒用管理画面
+// ＃生徒用管理画面(app/debug.tsx)
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../../firebase"; 
@@ -425,7 +425,7 @@ export default function AdminPage() {
                             {shop.imageUrl ? (
                                 <img src={shop.imageUrl} alt="" className="w-16 h-16 rounded object-cover bg-gray-700 flex-shrink-0" />
                             ) : (
-                                <div className="w-16 h-16 rounded bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">🎪</div>
+                                <div className="w-16 h-16 rounded bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">No Img</div>
                             )}
 
                             <div className="flex-1 min-w-0">
