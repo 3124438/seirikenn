@@ -1,3 +1,4 @@
+// ＃裏管理システム
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../../../firebase"; 
@@ -7,11 +8,9 @@ import { signInAnonymously } from "firebase/auth";
 type Tab = "venues" | "users";
 
 // ★修正ポイント1: 入力バグを防ぐための独立した入力コンポーネント
-// 入力中はローカルStateのみ更新し、フォーカスが外れた(onBlur)時にDB保存します
 const NicknameInput = ({ userId, initialValue, onSave }: { userId: string, initialValue: string, onSave: (uid: string, val: string) => void }) => {
     const [value, setValue] = useState(initialValue);
 
-    // DB側で他の人が変更した場合に同期する（編集中以外）
     useEffect(() => {
         setValue(initialValue || "");
     }, [initialValue]);
@@ -31,7 +30,7 @@ const NicknameInput = ({ userId, initialValue, onSave }: { userId: string, initi
             onBlur={handleBlur}
             onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                    e.currentTarget.blur(); // Enterで確定
+                    e.currentTarget.blur();
                 }
             }}
         />
@@ -44,8 +43,8 @@ export default function AdminPage() {
   const [myUserId, setMyUserId] = useState("");
 
   // --- データソース ---
-  const [attractions, setAttractions] = useState<any[]>([]); // 会場データ
-  const [users, setUsers] = useState<any[]>([]); // ★ユーザーDBデータ
+  const [attractions, setAttractions] = useState<any[]>([]); 
+  const [users, setUsers] = useState<any[]>([]); 
 
   // --- 1. 会場管理(Hack)用ステート ---
   const [targetStudentId, setTargetStudentId] = useState("");
@@ -58,10 +57,10 @@ export default function AdminPage() {
   const [configInputUserId, setConfigInputUserId] = useState("");
   const [showGuestWhite, setShowGuestWhite] = useState(false);
   const [showStudentWhite, setShowStudentWhite] = useState(false);
-  const [userSearchQuery, setUserSearchQuery] = useState(""); // 左サイドバー用
+  const [userSearchQuery, setUserSearchQuery] = useState("");
 
   // --- 2. ユーザーDB管理用ステート ---
-  const [dbSearchQuery, setDbSearchQuery] = useState(""); // ユーザー管理タブ用
+  const [dbSearchQuery, setDbSearchQuery] = useState(""); 
 
   // =================================================================
   //  初期化・データ監視
@@ -69,7 +68,6 @@ export default function AdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
 
-    // A. ID生成と自己保存
     const initUser = async () => {
         let stored = localStorage.getItem("bunkasai_user_id");
         if (!stored) {
@@ -81,7 +79,6 @@ export default function AdminPage() {
         }
         setMyUserId(stored);
 
-        // ★DBに自分を保存
         const userRef = doc(db, "users", stored);
         const snap = await getDoc(userRef);
         if (!snap.exists()) {
@@ -96,12 +93,10 @@ export default function AdminPage() {
     };
     initUser();
 
-    // B. 会場データの監視
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    // C. ユーザーデータの監視
     const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
         setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -128,14 +123,13 @@ export default function AdminPage() {
   //  ヘルパー関数
   // =================================================================
    
-  // IDからニックネームを取得する関数（見つからない場合は空文字）
   const getUserNickname = (uid: string) => {
       const u = users.find(user => user.id === uid);
       return u && u.nickname ? u.nickname : "";
   };
 
   // =================================================================
-  //  機能群 1: ユーザーDB管理 (New)
+  //  機能群 1: ユーザーDB管理
   // =================================================================
    
   const handleUpdateNickname = async (uid: string, newNick: string) => {
@@ -181,9 +175,8 @@ export default function AdminPage() {
     await deleteDoc(doc(db, "users", targetUid));
   };
 
-  // DB用フィルタリング (日本語対応)
   const filteredDbUsers = users.filter(u => {
-      const q = dbSearchQuery.toLowerCase(); // 小文字化して検索
+      const q = dbSearchQuery.toLowerCase();
       const idMatch = u.id.toLowerCase().includes(q);
       const nickMatch = u.nickname && u.nickname.toLowerCase().includes(q);
       return idMatch || nickMatch;
@@ -198,7 +191,6 @@ export default function AdminPage() {
   //  機能群 2: 会場管理・予約操作
   // =================================================================
 
-  // サイドバー用ID抽出 (予約履歴などから抽出)
   const allUserIds = useMemo(() => {
       const ids = new Set<string>();
       attractions.forEach(shop => {
@@ -211,7 +203,6 @@ export default function AdminPage() {
       return Array.from(ids).sort();
   }, [attractions]);
 
-  // ★修正: サイドバーのフィルタリング (ニックネームも含めて検索)
   const filteredSidebarIds = useMemo(() => {
       if (!userSearchQuery) return allUserIds;
       const q = userSearchQuery.toLowerCase();
@@ -222,7 +213,7 @@ export default function AdminPage() {
           const nickMatch = nickname.toLowerCase().includes(q);
           return idMatch || nickMatch;
       });
-  }, [allUserIds, userSearchQuery, users]); // usersへの依存を追加
+  }, [allUserIds, userSearchQuery, users]);
 
   const selectUser = (id: string) => {
       setTargetStudentId(id);
@@ -236,17 +227,30 @@ export default function AdminPage() {
       });
   };
 
+  // ★修正: フラグ保存処理を追加
   const toggleListMode = async (type: "guest" | "student") => {
       if (!selectedConfigShopId) return;
       const targetShop = attractions.find(s => s.id === selectedConfigShopId);
       if(!targetShop) return;
+      
       const field = type === "guest" ? "guestListType" : "studentListType";
       const currentMode = targetShop[field] === "white" ? "white" : "black";
       const newMode = currentMode === "white" ? "black" : "white";
+      
       if (!confirm(`設定を「${newMode === "white" ? "ホワイトリスト(許可制)" : "ブラックリスト(拒否制)"}」に変更しますか？`)) return;
       
       const updates: any = { [field]: newMode };
-      if (type === "guest") updates.isRestricted = (newMode === "white");
+      
+      // Guest用フラグ
+      if (type === "guest") {
+          updates.isRestricted = (newMode === "white");
+      }
+      
+      // Student(Admin)用フラグ（★ここが修正点）
+      if (type === "student") {
+          updates.isAdminRestricted = (newMode === "white");
+      }
+
       await updateDoc(doc(db, "attractions", selectedConfigShopId), updates);
   };
 
@@ -528,7 +532,6 @@ export default function AdminPage() {
                                               {user.id === myUserId && <span className="ml-2 bg-green-600 text-black text-[10px] px-2 rounded">YOU</span>}
                                           </td>
                                           <td className="px-6 py-4">
-                                              {/* ★修正: 全角入力対応コンポーネント */}
                                               <NicknameInput 
                                                   userId={user.id}
                                                   initialValue={user.nickname || ""}
@@ -574,48 +577,51 @@ export default function AdminPage() {
       {isModalOpen && (
           <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 animate-fade-in">
               <div className="bg-gray-900 border border-green-600 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-lg shadow-2xl p-6">
-                  <div className="flex justify-between items-center mb-6 border-b border-gray-700 pb-4">
-                      <h2 className="text-2xl font-bold text-white">操作対象: <span className="text-yellow-400">{targetStudentId}</span></h2>
-                      <button onClick={() => setIsModalOpen(false)} className="text-gray-500 hover:text-white text-3xl">×</button>
-                  </div>
-                  <div className="mb-8 space-y-2">
-                      <h3 className="text-sm font-bold text-gray-400 mb-2">現在の予約一覧</h3>
-                      {studentReservations.length === 0 && <p className="text-gray-500 text-center py-4">予約なし</p>}
-                      {studentReservations.map((res, idx) => (
-                          <div key={idx} className="flex justify-between items-center bg-black border border-gray-700 p-3 rounded">
-                              <div>
-                                  <div className="text-green-400 font-bold">{res.shopName}</div>
-                                  <div className="text-white text-lg">{res.time}</div>
-                                  <div className={`text-xs ${res.status === 'used' ? 'text-gray-500' : 'text-blue-400'}`}>
-                                      {res.status === 'used' ? '使用済み' : '予約済み'}
-                                  </div>
-                              </div>
-                              <div className="flex gap-2">
-                                  {res.status !== 'used' && (
-                                      <button onClick={() => forceToggleStatus(res, "used")} className="px-3 py-1 bg-gray-800 text-xs rounded hover:bg-gray-700">使用済にする</button>
-                                  )}
-                                  {res.status === 'used' && (
-                                      <button onClick={() => forceToggleStatus(res, "reserved")} className="px-3 py-1 bg-gray-800 text-xs rounded hover:bg-gray-700">未保存に戻す</button>
-                                  )}
-                                  <button onClick={() => forceDeleteReservation(res)} className="px-3 py-1 bg-red-900 text-white text-xs rounded hover:bg-red-700">削除</button>
-                              </div>
-                          </div>
-                      ))}
+                  <div className="flex justify-between items-center mb-6">
+                      <div>
+                          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                              予約状況: <span className="text-yellow-400 font-mono text-2xl">{targetStudentId}</span>
+                          </h2>
+                          <p className="text-gray-400 text-sm mt-1">{getUserNickname(targetStudentId)}</p>
+                      </div>
+                      <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-white text-2xl">×</button>
                   </div>
 
-                  <div className="border-t border-gray-700 pt-6">
-                      <h3 className="text-sm font-bold text-green-400 mb-4">新規予約の強制追加</h3>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                          <select className="bg-black border border-gray-600 text-white p-2 rounded" value={addShopId} onChange={e => setAddShopId(e.target.value)}>
+                  <div className="bg-black p-4 rounded border border-gray-700 mb-6">
+                      <h3 className="text-green-500 font-bold mb-2 text-sm uppercase">Manual Reserve (強制予約)</h3>
+                      <div className="flex gap-2 mb-2">
+                          <select className="bg-gray-800 text-white p-2 rounded flex-1 text-sm border border-gray-600" onChange={e => setAddShopId(e.target.value)} value={addShopId}>
                               <option value="">会場を選択...</option>
                               {attractions.map(shop => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
                           </select>
-                          <select className="bg-black border border-gray-600 text-white p-2 rounded" value={addTime} onChange={e => setAddTime(e.target.value)}>
-                              <option value="">時間を選択...</option>
+                          <select className="bg-gray-800 text-white p-2 rounded w-32 text-sm border border-gray-600" onChange={e => setAddTime(e.target.value)} value={addTime}>
+                              <option value="">時間...</option>
                               {targetShopTimes.map(t => <option key={t} value={t}>{t}</option>)}
                           </select>
                       </div>
-                      <button onClick={forceAddReservation} className="w-full bg-green-700 hover:bg-green-600 text-white font-bold py-3 rounded">予約を追加</button>
+                      <button onClick={forceAddReservation} className="w-full bg-green-900/50 hover:bg-green-700 text-green-200 border border-green-700 py-2 rounded text-sm font-bold">
+                          ＋ 強制予約を実行
+                      </button>
+                  </div>
+
+                  <div className="space-y-2">
+                      {studentReservations.length === 0 && <p className="text-gray-500 text-center py-4">予約データはありません</p>}
+                      {studentReservations.map((res: any) => (
+                          <div key={res.timestamp} className="bg-gray-800 p-3 rounded flex justify-between items-center border border-gray-700">
+                              <div>
+                                  <div className="text-xs text-gray-400 mb-1">{res.shopName}</div>
+                                  <div className="text-lg font-bold text-white font-mono">{res.time}</div>
+                              </div>
+                              <div className="flex gap-2">
+                                  {res.status !== 'used' ? (
+                                      <button onClick={() => forceToggleStatus(res, "used")} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1 rounded">入場済にする</button>
+                                  ) : (
+                                      <button onClick={() => forceToggleStatus(res, "reserved")} className="bg-gray-600 hover:bg-gray-500 text-white text-xs px-3 py-1 rounded">未入場の状態に戻す</button>
+                                  )}
+                                  <button onClick={() => forceDeleteReservation(res)} className="bg-red-900 hover:bg-red-700 text-red-200 border border-red-700 text-xs px-3 py-1 rounded">削除</button>
+                              </div>
+                          </div>
+                      ))}
                   </div>
               </div>
           </div>
