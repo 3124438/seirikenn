@@ -8,7 +8,7 @@ import { signInAnonymously } from "firebase/auth";
 
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
-  
+   
   // ★追加: 自分のID管理用
   const [myUserId, setMyUserId] = useState("");
 
@@ -101,7 +101,7 @@ export default function SuperAdminPage() {
               Object.keys(shop.slots || {}).forEach(key => {
                   resetSlots[key] = 0;
               });
-              
+               
               return updateDoc(doc(db, "attractions", shop.id), {
                   reservations: [],
                   slots: resetSlots
@@ -258,7 +258,7 @@ export default function SuperAdminPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
-      
+       
       {/* ユーザーID表示バー */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
           <div className="text-xs text-gray-400">Logged in as:</div>
@@ -270,7 +270,7 @@ export default function SuperAdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         <div className="mb-6 border-b border-gray-700 pb-4">
           <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
-          
+           
           <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
               <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
               <div className="mt-4 pt-4 border-t border-gray-700">
@@ -367,31 +367,37 @@ export default function SuperAdminPage() {
                           onClick={() => setExpandedShopId(shop.id)}
                           className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                         >
-                            {/* ★修正: 画像と団体名、会場名を左側にまとめる構造に変更 */}
+                            {/* ★修正部分: 左側（画像→テキスト縦積み） */}
                             <div className="flex items-center gap-4">
-                                {/* 画像（あれば表示、なければプレースホルダー） */}
+                                {/* 1. サムネイル (左端) */}
                                 {shop.imageUrl ? (
-                                    <img src={shop.imageUrl} alt={shop.name} className="w-14 h-14 object-cover rounded-md bg-gray-900" />
+                                    <img src={shop.imageUrl} alt={shop.name} className="w-16 h-16 object-cover rounded-md bg-gray-900 shrink-0" />
                                 ) : (
-                                    <div className="w-14 h-14 bg-gray-700 rounded-md flex items-center justify-center text-xs text-gray-500">
+                                    <div className="w-16 h-16 bg-gray-700 rounded-md flex items-center justify-center text-xs text-gray-500 shrink-0">
                                         No Img
                                     </div>
                                 )}
 
-                                <div>
-                                    {/* 団体名を表示 */}
-                                    {shop.department && (
-                                        <div className="text-xs text-blue-300 font-bold mb-0.5">{shop.department}</div>
-                                    )}
+                                {/* 2. テキスト情報 (画像の右隣) */}
+                                <div className="flex flex-col justify-center">
+                                    {/* 上段: ID + 停止タグ */}
                                     <div className="flex items-center gap-2">
-                                        <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
-                                        <span className="font-bold text-lg">{shop.name}</span>
-                                        {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                                        <span className="text-yellow-400 font-bold font-mono text-xl leading-none">{shop.id}</span>
+                                        {shop.isPaused && <span className="text-[10px] bg-red-600 px-1.5 py-0.5 rounded text-white">停止中</span>}
                                     </div>
+
+                                    {/* 中段: 会場名 (IDの下に配置) */}
+                                    <div className="font-bold text-lg leading-tight mt-0.5">{shop.name}</div>
+
+                                    {/* 下段: 団体名 (会場名の下に配置) */}
+                                    {shop.department && (
+                                        <div className="text-xs text-blue-300 mt-1">{shop.department}</div>
+                                    )}
                                 </div>
                             </div>
                             
-                            <div className="flex items-center gap-4">
+                            {/* 右側: 予約数カウント */}
+                            <div className="flex items-center gap-4 pl-2">
                                 <div className="text-right">
                                     <span className="text-[10px] text-gray-500 block">TOTAL</span>
                                     <span className="font-mono text-xl text-blue-400">{totalShopResDisplay}</span>
