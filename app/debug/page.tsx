@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
-// ★修正: usersコレクションを監視するため doc, onSnapshot を使用します（既存のimportに含まれています）
+// ★修正: usersコレクションを監視するため doc, onSnapshot を使用します
 import { db, auth } from "../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -64,7 +64,7 @@ export default function AdminPage() {
             // isBannedがtrueならBAN状態にする
             setIsGlobalBanned(!!userData.isBanned);
         } else {
-            // ドキュメントがない場合はBANされていないとみなす（または必要に応じて作成）
+            // ドキュメントがない場合はBANされていないとみなす
             setIsGlobalBanned(false);
         }
     });
@@ -95,7 +95,7 @@ export default function AdminPage() {
 
   // --- 以下、既存のロジック ---
 
-  // 共通権限剥奪チェック関数 (会場ごとのBAN用 - 今回の全体BANとは別ですが維持します)
+  // 共通権限剥奪チェック関数 (会場ごとのBAN用)
   const checkIsBanned = (shop: any) => {
     if (shop?.adminBannedUsers?.includes(myUserId)) {
         alert(`⛔ 操作エラー\nあなたのID (${myUserId}) は、この会場 (${shop.name}) の操作権限を剥奪されているため、この操作は実行できません。`);
