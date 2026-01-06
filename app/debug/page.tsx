@@ -21,6 +21,8 @@ export default function AdminPage() {
   // 編集用フォームステート
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
+  const [department, setDepartment] = useState(""); // ★追加: 団体・クラス名
+  const [imageUrl, setImageUrl] = useState("");     // ★追加: 画像URL
   const [password, setPassword] = useState("");
   const [groupLimit, setGroupLimit] = useState(4);
   const [openTime, setOpenTime] = useState("10:00");
@@ -148,7 +150,7 @@ export default function AdminPage() {
   // --- 編集関連 ---
   const resetForm = () => {
     setIsEditing(false);
-    setManualId(""); setNewName(""); setPassword("");
+    setManualId(""); setNewName(""); setDepartment(""); setImageUrl(""); setPassword("");
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
   };
@@ -158,10 +160,18 @@ export default function AdminPage() {
     if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
     setIsEditing(true);
-    setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
-    setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
-    setCloseTime(shop.closeTime); setDuration(shop.duration);
-    setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
+    setManualId(shop.id); 
+    setNewName(shop.name);
+    setDepartment(shop.department || ""); // ★追加
+    setImageUrl(shop.imageUrl || "");     // ★追加
+    setPassword(shop.password);
+    setGroupLimit(shop.groupLimit || 4); 
+    setOpenTime(shop.openTime);
+    setCloseTime(shop.closeTime); 
+    setDuration(shop.duration);
+    setCapacity(shop.capacity); 
+    setIsPaused(shop.isPaused || false);
+    
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -199,8 +209,12 @@ export default function AdminPage() {
         }
     }
 
+    // ★追加: department, imageUrl を保存データに含める
     const data: any = {
-      name: newName, password, groupLimit,
+      name: newName, 
+      department,
+      imageUrl,
+      password, groupLimit,
       openTime, closeTime, duration, capacity, isPaused, slots
     };
 
@@ -290,21 +304,38 @@ export default function AdminPage() {
                         <span>{newName}</span>
                     </h3>
                     
-                    {/* 編集フォーム（省略なし） */}
-                    <div className="grid gap-2 md:grid-cols-3 mb-2">
+                    {/* 編集フォーム */}
+                    <div className="grid gap-2 md:grid-cols-2 mb-2">
+                         {/* ID & Password */}
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">ID (変更不可)</label>
                             <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" value={manualId} />
-                        </div>
-                        <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">会場名</label>
-                            <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
                         </div>
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">パスワード (変更不可)</label>
                             <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" placeholder="変更不可" maxLength={5} value={password} />
                         </div>
                     </div>
+
+                    {/* 基本情報 */}
+                    <div className="grid gap-2 mb-4">
+                        <div className="flex flex-col">
+                            <label className="text-xs text-gray-500">会場名</label>
+                            <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                             <div className="flex flex-col">
+                                <label className="text-xs text-gray-500">団体・クラス名</label>
+                                <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="例: 3年A組" value={department} onChange={e => setDepartment(e.target.value)} />
+                             </div>
+                             <div className="flex flex-col">
+                                <label className="text-xs text-gray-500">画像URL</label>
+                                <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+                             </div>
+                        </div>
+                    </div>
+
+                    {/* 時間・設定 */}
                     <div className="grid grid-cols-4 gap-2 mb-2">
                         <div className="flex flex-col">
                             <label className="text-xs text-gray-500">開始</label>
@@ -323,6 +354,7 @@ export default function AdminPage() {
                             <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="定員"/>
                         </div>
                     </div>
+
                     <div className="flex items-center gap-3 mb-6 p-2 bg-gray-900 rounded">
                         <label className="text-xs text-gray-400">1組の最大人数:</label>
                         <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
@@ -332,6 +364,7 @@ export default function AdminPage() {
                             <span className={isPaused ? "text-red-500" : "text-gray-400"}>受付を緊急停止する</span>
                         </label>
                     </div>
+
                     <div className="flex gap-2">
                         <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded font-bold transition shadow-lg shadow-blue-900/40">変更を保存</button>
                         <button onClick={resetForm} className="bg-gray-700 hover:bg-gray-600 px-6 rounded text-sm transition">キャンセル</button>
@@ -368,7 +401,6 @@ export default function AdminPage() {
                 {attractions.map(shop => {
                     const hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                     
-                    // ★修正: 入室不可状態のチェック
                     const blacklisted = isUserBlacklisted(shop);     // ブラックリストに入っている
                     const notWhitelisted = isUserNotWhitelisted(shop); // ホワイトリストモードなのにリストにいない
                     const adminRestricted = isAdminRestrictedAndNotAllowed(shop); // 管理者モード制限
@@ -379,40 +411,48 @@ export default function AdminPage() {
                         <button 
                             key={shop.id} 
                             onClick={() => handleExpandShop(shop.id)} 
-                            className={`p-4 rounded-xl border text-left flex justify-between items-center transition hover:bg-gray-800 relative
+                            className={`group p-4 rounded-xl border text-left flex items-start gap-4 transition hover:bg-gray-800 relative overflow-hidden
                                 ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}
-                                ${isLocked ? 'opacity-70 bg-gray-900' : ''}
+                                ${isLocked ? 'opacity-70 bg-gray-900 grayscale' : ''}
                             `}
                         >
-                            <div>
+                            {/* 画像サムネイル (あれば) */}
+                            {shop.imageUrl ? (
+                                <img src={shop.imageUrl} alt="" className="w-16 h-16 rounded object-cover bg-gray-700 flex-shrink-0" />
+                            ) : (
+                                <div className="w-16 h-16 rounded bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">🎪</div>
+                            )}
+
+                            <div className="flex-1 min-w-0">
                                 <div className="flex flex-wrap items-center gap-2 mb-1">
                                     <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
                                     
-                                    {/* ★修正: 状態表示（右側に表示） */}
-                                    {blacklisted && (
-                                        <span className="text-xs bg-red-900 text-red-200 border border-red-700 px-2 py-0.5 rounded font-bold flex items-center gap-1">
-                                            ⛔ BAN指定
+                                    {/* 団体名バッジ */}
+                                    {shop.department && (
+                                        <span className="text-xs bg-blue-900/50 text-blue-200 px-2 py-0.5 rounded border border-blue-800/50 truncate max-w-[100px]">
+                                            {shop.department}
                                         </span>
+                                    )}
+
+                                    {/* 状態表示 */}
+                                    {blacklisted && (
+                                        <span className="text-xs bg-red-900 text-red-200 border border-red-700 px-2 py-0.5 rounded font-bold">⛔ BAN指定</span>
                                     )}
                                     {notWhitelisted && (
-                                        <span className="text-xs bg-gray-700 text-gray-300 border border-gray-500 px-2 py-0.5 rounded font-bold flex items-center gap-1">
-                                            🔒 許可外
-                                        </span>
+                                        <span className="text-xs bg-gray-700 text-gray-300 border border-gray-500 px-2 py-0.5 rounded font-bold">🔒 許可外</span>
                                     )}
-                                    {/* (おまけ) 管理者制限の場合 */}
                                     {(!blacklisted && !notWhitelisted && adminRestricted) && (
-                                        <span className="text-xs bg-purple-900 text-purple-200 border border-purple-700 px-2 py-0.5 rounded font-bold flex items-center gap-1">
-                                            🛡️ スタッフ限
-                                        </span>
+                                        <span className="text-xs bg-purple-900 text-purple-200 border border-purple-700 px-2 py-0.5 rounded font-bold">🛡️ スタッフ限</span>
                                     )}
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                    <span className="font-bold text-lg">{shop.name}</span>
-                                    {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                                    <span className="font-bold text-lg truncate w-full">{shop.name}</span>
+                                    {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white whitespace-nowrap">停止中</span>}
                                 </div>
                             </div>
-                            <div className="text-gray-400 text-2xl">
+
+                            <div className="self-center text-gray-400 text-2xl group-hover:text-white transition-transform group-hover:translate-x-1">
                                 ›
                             </div>
                         </button>
@@ -431,17 +471,32 @@ export default function AdminPage() {
 
                 <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
                     {/* タイトルバー */}
-                    <div className="bg-gray-700 p-4 flex justify-between items-center">
-                        <div>
-                            <h2 className="text-2xl font-bold flex items-center gap-2">
-                                <span className="text-yellow-400 font-mono">{targetShop.id}</span>
+                    <div className="bg-gray-700 p-4 flex justify-between items-start relative overflow-hidden">
+                        {/* 背景画像(あれば薄く表示) */}
+                        {targetShop.imageUrl && (
+                            <div className="absolute inset-0 z-0 opacity-20">
+                                <img src={targetShop.imageUrl} className="w-full h-full object-cover" alt="" />
+                            </div>
+                        )}
+
+                        <div className="relative z-10">
+                            <div className="flex items-center gap-2 mb-1">
+                                <span className="text-yellow-400 font-mono font-bold text-xl">{targetShop.id}</span>
+                                {targetShop.department && (
+                                    <span className="text-xs bg-black/50 text-white px-2 py-0.5 rounded backdrop-blur-sm border border-white/20">
+                                        {targetShop.department}
+                                    </span>
+                                )}
+                            </div>
+                            <h2 className="text-2xl font-bold flex items-center gap-2 text-white drop-shadow-md">
                                 {targetShop.name}
                             </h2>
-                            <p className="text-xs text-gray-400 mt-1">Pass: **** | 定員: {targetShop.capacity}組</p>
+                            <p className="text-xs text-gray-300 mt-1 drop-shadow-md">Pass: **** | 定員: {targetShop.capacity}組</p>
                         </div>
-                        <div className="flex gap-2">
+
+                        <div className="flex gap-2 relative z-10">
                             <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500 font-bold shadow-lg">⚙️ 設定編集</button>
-                            <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500">会場削除</button>
+                            <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500 shadow-lg">削除</button>
                         </div>
                     </div>
 
