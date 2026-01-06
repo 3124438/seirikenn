@@ -1,7 +1,7 @@
-// ＃生徒会用管理画面 (app/admin/super/page.tsx など)
+// ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
 import { useState, useEffect, useMemo } from "react";
-// 階層に合わせてパスを調整 (app/debug/Council/page.tsx)
+// 階層に合わせてパスを調整
 import { db, auth } from "../../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -367,10 +367,28 @@ export default function SuperAdminPage() {
                           onClick={() => setExpandedShopId(shop.id)}
                           className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                         >
-                            <div>
-                                <span className="text-yellow-400 font-bold font-mono text-xl mr-3">{shop.id}</span>
-                                <span className="font-bold text-lg">{shop.name}</span>
-                                {shop.isPaused && <span className="ml-2 text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                            {/* ★修正: 画像と団体名、会場名を左側にまとめる構造に変更 */}
+                            <div className="flex items-center gap-4">
+                                {/* 画像（あれば表示、なければプレースホルダー） */}
+                                {shop.imageUrl ? (
+                                    <img src={shop.imageUrl} alt={shop.name} className="w-14 h-14 object-cover rounded-md bg-gray-900" />
+                                ) : (
+                                    <div className="w-14 h-14 bg-gray-700 rounded-md flex items-center justify-center text-xs text-gray-500">
+                                        No Img
+                                    </div>
+                                )}
+
+                                <div>
+                                    {/* 団体名を表示 */}
+                                    {shop.department && (
+                                        <div className="text-xs text-blue-300 font-bold mb-0.5">{shop.department}</div>
+                                    )}
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-yellow-400 font-bold font-mono text-xl">{shop.id}</span>
+                                        <span className="font-bold text-lg">{shop.name}</span>
+                                        {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white">停止中</span>}
+                                    </div>
+                                </div>
                             </div>
                             
                             <div className="flex items-center gap-4">
