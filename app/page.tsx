@@ -271,8 +271,6 @@ export default function Home() {
                       {shop.name}
                   </h3>
                   
-                  {/* ★一覧画面での説明文表示を削除しました★ */}
-
                   <div className="text-xs text-gray-400">
                       {shop.openTime} - {shop.closeTime} / 定員: {shop.groupLimit || shop.capacity}名
                   </div>
@@ -299,7 +297,8 @@ export default function Home() {
                     ← もどる
                 </button>
 
-                <div className={`${selectedShop.imageUrl ? "absolute bottom-0 left-0 right-0 p-4 text-white" : "p-4 text-gray-800 border-b"}`}>
+                {/* ▼▼▼ 変更点: 画像がない時は上部パディング(pt-12)を増やしてボタンとの重なりを防ぐ ▼▼▼ */}
+                <div className={`${selectedShop.imageUrl ? "absolute bottom-0 left-0 right-0 p-4 text-white" : "pt-12 px-4 pb-4 text-gray-800 border-b"}`}>
                     {selectedShop.department && (
                         <span className={`text-xs font-bold px-2 py-0.5 rounded mb-1 inline-block ${selectedShop.imageUrl ? "bg-blue-600 text-white" : "bg-blue-100 text-blue-800"}`}>
                             {selectedShop.department}
@@ -312,7 +311,7 @@ export default function Home() {
             </div>
 
             <div className="p-4">
-                {/* ★詳細画面での説明文表示エリア（入力されている場合のみ表示）★ */}
+                {/* 説明文表示エリア */}
                 {selectedShop.description && (
                     <div className="mb-6 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-3 rounded-lg border border-gray-100">
                         {selectedShop.description}
