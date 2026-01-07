@@ -224,7 +224,6 @@ export default function Home() {
               <div className="flex justify-between items-center mb-3">
                 <div>
                     <h2 className="font-bold text-lg flex items-center">
-                        {/* ID削除: 名前のみ表示 */}
                         {t.shopName}
                     </h2>
                     <p className="text-3xl font-bold text-blue-600 font-mono">{t.time}</p>
@@ -250,16 +249,13 @@ export default function Home() {
           {attractions.map((shop) => (
             <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-3 rounded-xl shadow-sm border text-left flex items-start gap-3 hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
               
-              {/* サムネイル画像エリア */}
-              <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0 relative">
-                  {shop.imageUrl ? (
+              {/* サムネイル画像エリア（画像がない場合は表示しない） */}
+              {shop.imageUrl && (
+                  <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0 relative">
                       <img src={shop.imageUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                      <div className="w-full h-full flex items-center justify-center text-2xl"></div>
-                  )}
-              </div>
+                  </div>
+              )}
 
-              {/* テキスト情報エリア */}
               <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1 mb-1">
                       {shop.department && (
@@ -272,13 +268,13 @@ export default function Home() {
                   </div>
                   
                   <h3 className="font-bold text-lg leading-tight truncate text-gray-800 mb-1">
-                      {/* ID削除: 名前のみ表示 */}
                       {shop.name}
                   </h3>
                   
-                  <div className="text-xs text-gray-500">
-                      {shop.openTime} - {shop.closeTime}<br/>
-                      定員: {shop.groupLimit || shop.capacity}名
+                  {/* ★一覧画面での説明文表示を削除しました★ */}
+
+                  <div className="text-xs text-gray-400">
+                      {shop.openTime} - {shop.closeTime} / 定員: {shop.groupLimit || shop.capacity}名
                   </div>
               </div>
               
@@ -303,20 +299,26 @@ export default function Home() {
                     ← もどる
                 </button>
 
-                <div className={`${selectedShop.imageUrl ? "absolute bottom-0 left-0 right-0 p-4 text-white" : "p-4 text-gray-800"}`}>
+                <div className={`${selectedShop.imageUrl ? "absolute bottom-0 left-0 right-0 p-4 text-white" : "p-4 text-gray-800 border-b"}`}>
                     {selectedShop.department && (
                         <span className={`text-xs font-bold px-2 py-0.5 rounded mb-1 inline-block ${selectedShop.imageUrl ? "bg-blue-600 text-white" : "bg-blue-100 text-blue-800"}`}>
                             {selectedShop.department}
                         </span>
                     )}
                     <h2 className="text-2xl font-bold leading-tight">
-                        {/* ID削除: 名前のみ表示 */}
                         {selectedShop.name}
                     </h2>
                 </div>
             </div>
 
             <div className="p-4">
+                {/* ★詳細画面での説明文表示エリア（入力されている場合のみ表示）★ */}
+                {selectedShop.description && (
+                    <div className="mb-6 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap bg-gray-50 p-3 rounded-lg border border-gray-100">
+                        {selectedShop.description}
+                    </div>
+                )}
+
                 {selectedShop.isRestricted && (
                     <div className="mb-4 bg-purple-50 border border-purple-200 text-purple-800 px-3 py-2 rounded text-sm flex items-center gap-2">
                         <span>🔒</span>
@@ -356,7 +358,6 @@ export default function Home() {
                                 <span className="text-xs font-bold z-10">
                                     {isBooked ? "予約済" : isNotAllowed ? "招待のみ" : isFull ? "満席" : `あと${remaining}組`}
                                 </span>
-                                {/* 残りわずかの場合の視覚効果（任意） */}
                                 {!isFull && !isBooked && !isNotAllowed && remaining <= 2 && (
                                     <div className="absolute top-0 right-0 w-3 h-3 bg-red-400 rounded-bl-full"></div>
                                 )}
@@ -382,7 +383,6 @@ export default function Home() {
                         <div key={t.timestamp} className="bg-gray-100 p-3 rounded opacity-70 grayscale flex justify-between items-center">
                             <div>
                                 <h2 className="font-bold text-sm text-gray-600 flex items-center">
-                                    {/* ID削除: 名前のみ表示 */}
                                     {t.shopName}
                                 </h2>
                                 <p className="text-sm font-bold text-gray-500">{t.time}</p>
@@ -401,4 +401,3 @@ export default function Home() {
     </div>
   );
 }
-
