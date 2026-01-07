@@ -1,4 +1,3 @@
-// ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
 import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整
@@ -6,24 +5,40 @@ import { db, auth } from "../../../firebase";
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
+// ★追加1: GoogleドライブのURLを自動変換する関数
+const convertGoogleDriveLink = (url: string) => {
+  if (!url) return "";
+  // すでに変換済み、またはGoogleドライブじゃない場合はそのまま返す
+  if (!url.includes("drive.google.com") || url.includes("export=view")) {
+    return url;
+  }
+  try {
+    // ID部分("d/"の後ろ)を取り出して変換
+    const id = url.split("/d/")[1].split("/")[0];
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  } catch (e) {
+    return url;
+  }
+};
+
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
   
-  // ★追加: 自分のID管理用
+  // 自分のID管理用
   const [myUserId, setMyUserId] = useState("");
 
   // 表示モード管理
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
   const [isEditing, setIsEditing] = useState(false);
 
-  // ★ 変更前（元）のIDを保持しておくためのステート
+  // 変更前（元）のIDを保持しておくためのステート
   const [originalId, setOriginalId] = useState<string | null>(null);
 
   // 新規作成・編集用フォーム
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
   const [password, setPassword] = useState("");
-  // ★ 追加フィールド
+  // 追加フィールド
   const [department, setDepartment] = useState(""); // 団体名/クラス名
   const [imageUrl, setImageUrl] = useState("");     // 画像URL
 
@@ -40,7 +55,7 @@ export default function SuperAdminPage() {
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
 
-    // --- ★追加: IDの取得と生成ロジック ---
+    // --- IDの取得と生成ロジック ---
     let stored = localStorage.getItem("bunkasai_user_id");
     if (!stored) {
         const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -137,7 +152,7 @@ export default function SuperAdminPage() {
     setIsEditing(false);
     setOriginalId(null);
     setManualId(""); setNewName(""); setPassword("");
-    setDepartment(""); setImageUrl(""); // ★追加
+    setDepartment(""); setImageUrl(""); 
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
   };
@@ -146,8 +161,8 @@ export default function SuperAdminPage() {
     setIsEditing(true);
     setOriginalId(shop.id);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
-    setDepartment(shop.department || ""); // ★追加
-    setImageUrl(shop.imageUrl || "");     // ★追加
+    setDepartment(shop.department || "");
+    setImageUrl(shop.imageUrl || "");
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
@@ -193,7 +208,7 @@ export default function SuperAdminPage() {
 
     const data: any = {
       name: newName, password, groupLimit,
-      department, imageUrl, // ★追加
+      department, imageUrl, 
       openTime, closeTime, duration, capacity, isPaused, slots,
       reservations: existingReservations
     };
@@ -289,7 +304,14 @@ export default function SuperAdminPage() {
                   {/* ★ 追加フィールドエリア */}
                   <div className="grid gap-2 md:grid-cols-2 mb-2">
                       <input className="bg-gray-700 p-2 rounded text-white" placeholder="団体名/クラス名 (例: 3年B組)" value={department} onChange={e => setDepartment(e.target.value)} />
-                      <input className="bg-gray-700 p-2 rounded text-white" placeholder="画像URL (例: https://imgur.com/...)" value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+                      
+                      {/* ★修正2: URL入力時に自動変換を実行 */}
+                      <input 
+                        className="bg-gray-700 p-2 rounded text-white" 
+                        placeholder="画像URL (Googleドライブの共有リンクもOK)" 
+                        value={imageUrl} 
+                        onChange={e => setImageUrl(convertGoogleDriveLink(e.target.value))} 
+                      />
                   </div>
 
                   {isEditing && manualId !== originalId && (
@@ -367,11 +389,16 @@ export default function SuperAdminPage() {
                           onClick={() => setExpandedShopId(shop.id)}
                           className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                         >
-                            {/* ★レイアウト変更: 左からサムネイル、テキスト情報の順 */}
                             <div className="flex items-center gap-4">
                                 {/* 画像（サムネイル） */}
                                 {shop.imageUrl ? (
-                                    <img src={shop.imageUrl} alt={shop.name} className="w-14 h-14 object-cover rounded-md bg-gray-900 shrink-0" />
+                                    // ★修正3: ここにおまじないを追加
+                                    <img 
+                                        src={shop.imageUrl} 
+                                        alt={shop.name} 
+                                        referrerPolicy="no-referrer" 
+                                        className="w-14 h-14 object-cover rounded-md bg-gray-900 shrink-0" 
+                                    />
                                 ) : (
                                     <div className="w-14 h-14 bg-gray-700 rounded-md flex items-center justify-center text-xs text-gray-500 shrink-0">
                                         No Img
@@ -380,7 +407,6 @@ export default function SuperAdminPage() {
 
                                 {/* テキスト情報ブロック */}
                                 <div className="flex flex-col items-start min-w-0">
-                                    {/* 上段: ID + 団体名 (小さく表示) */}
                                     <div className="flex items-center gap-2 mb-1">
                                         <span className="text-yellow-400 font-bold font-mono text-sm">{shop.id}</span>
                                         {shop.department && (
@@ -390,7 +416,6 @@ export default function SuperAdminPage() {
                                         )}
                                     </div>
                                     
-                                    {/* 下段: 会場名 (大きく表示) */}
                                     <div className="flex items-center gap-2">
                                         <span className="font-bold text-lg leading-tight line-clamp-1">{shop.name}</span>
                                         {shop.isPaused && <span className="text-[10px] bg-red-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">停止中</span>}
@@ -398,7 +423,6 @@ export default function SuperAdminPage() {
                                 </div>
                             </div>
                             
-                            {/* 右端: 予約合計数 */}
                             <div className="flex items-center gap-4 pl-2">
                                 <div className="text-right">
                                     <span className="text-[10px] text-gray-500 block">TOTAL</span>
@@ -422,7 +446,13 @@ export default function SuperAdminPage() {
                         {/* 背景画像がある場合 */}
                         {targetShop.imageUrl && (
                             <div className="absolute inset-0 opacity-30">
-                                <img src={targetShop.imageUrl} alt="" className="w-full h-full object-cover" />
+                                {/* ★修正4: ここにもおまじないを追加 */}
+                                <img 
+                                    src={targetShop.imageUrl} 
+                                    alt="" 
+                                    referrerPolicy="no-referrer"
+                                    className="w-full h-full object-cover" 
+                                />
                                 <div className="absolute inset-0 bg-gradient-to-r from-gray-900 via-gray-900/80 to-transparent"></div>
                             </div>
                         )}
