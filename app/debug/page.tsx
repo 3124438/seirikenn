@@ -1,9 +1,23 @@
-// ＃生徒用管理画面
 "use client";
 import { useState, useEffect } from "react";
+// 階層に合わせてパスを調整
 import { db, auth } from "../../firebase"; 
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
+
+// GoogleドライブのURLを自動変換する関数（追加）
+const convertGoogleDriveLink = (url: string) => {
+  if (!url) return "";
+  if (!url.includes("drive.google.com") || url.includes("export=view")) {
+    return url;
+  }
+  try {
+    const id = url.split("/d/")[1].split("/")[0];
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  } catch (e) {
+    return url;
+  }
+};
 
 export default function AdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
@@ -21,9 +35,11 @@ export default function AdminPage() {
   // 編集用フォームステート
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
-  const [department, setDepartment] = useState(""); // ★追加: 団体・クラス名
-  const [imageUrl, setImageUrl] = useState("");     // ★追加: 画像URL
+  const [department, setDepartment] = useState(""); 
+  const [imageUrl, setImageUrl] = useState("");     
+  const [description, setDescription] = useState(""); // ★追加: 会場説明文
   const [password, setPassword] = useState("");
+  
   const [groupLimit, setGroupLimit] = useState(4);
   const [openTime, setOpenTime] = useState("10:00");
   const [closeTime, setCloseTime] = useState("15:00");
@@ -150,7 +166,7 @@ export default function AdminPage() {
   // --- 編集関連 ---
   const resetForm = () => {
     setIsEditing(false);
-    setManualId(""); setNewName(""); setDepartment(""); setImageUrl(""); setPassword("");
+    setManualId(""); setNewName(""); setDepartment(""); setImageUrl(""); setDescription(""); setPassword("");
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
   };
@@ -162,8 +178,9 @@ export default function AdminPage() {
     setIsEditing(true);
     setManualId(shop.id); 
     setNewName(shop.name);
-    setDepartment(shop.department || ""); // ★追加
-    setImageUrl(shop.imageUrl || "");     // ★追加
+    setDepartment(shop.department || ""); 
+    setImageUrl(shop.imageUrl || "");
+    setDescription(shop.description || ""); // ★追加
     setPassword(shop.password);
     setGroupLimit(shop.groupLimit || 4); 
     setOpenTime(shop.openTime);
@@ -209,11 +226,11 @@ export default function AdminPage() {
         }
     }
 
-    // ★追加: department, imageUrl を保存データに含める
     const data: any = {
       name: newName, 
       department,
       imageUrl,
+      description, // ★追加
       password, groupLimit,
       openTime, closeTime, duration, capacity, isPaused, slots
     };
@@ -298,81 +315,117 @@ export default function AdminPage() {
             
             {isEditing ? (
                 <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 mb-4 animate-fade-in shadow-lg shadow-blue-900/20">
-                    <h3 className="text-sm font-bold mb-4 text-blue-300 flex items-center gap-2">
-                        <span>⚙️ 設定編集モード:</span>
-                        <span className="text-xl text-yellow-400 font-mono">{manualId}</span>
-                        <span>{newName}</span>
+                    <h3 className="text-sm font-bold mb-4 text-blue-300 flex items-center gap-2 border-b border-gray-700 pb-2">
+                        <span>✏️ 設定編集モード</span>
+                        <span className="text-gray-500 text-xs font-normal ml-auto">ID: {manualId}</span>
                     </h3>
                     
-                    {/* 編集フォーム */}
-                    <div className="grid gap-2 md:grid-cols-2 mb-2">
-                         {/* ID & Password */}
+                    {/* ★★★ 入力フォーム（ラベル・説明付き） ★★★ */}
+
+                    {/* 1. 変更不可情報（ID, Pass） */}
+                    <div className="grid gap-4 md:grid-cols-2 mb-4 bg-gray-900/50 p-3 rounded border border-gray-700">
                         <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">ID (変更不可)</label>
-                            <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" value={manualId} />
+                            <label className="text-xs text-gray-500 mb-1">会場ID <span className="text-[10px] bg-gray-700 px-1 rounded text-gray-400">変更不可</span></label>
+                            <input 
+                                disabled 
+                                className="bg-gray-800 p-2 rounded text-gray-400 cursor-not-allowed border border-gray-700 font-mono" 
+                                value={manualId} 
+                            />
                         </div>
                         <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">パスワード (変更不可)</label>
-                            <input disabled className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed" placeholder="変更不可" maxLength={5} value={password} />
+                            <label className="text-xs text-gray-500 mb-1">管理者Pass <span className="text-[10px] bg-gray-700 px-1 rounded text-gray-400">変更不可</span></label>
+                            <input 
+                                disabled 
+                                className="bg-gray-800 p-2 rounded text-gray-400 cursor-not-allowed border border-gray-700 font-mono" 
+                                value={password} 
+                            />
                         </div>
                     </div>
 
-                    {/* 基本情報 */}
-                    <div className="grid gap-2 mb-4">
+                    {/* 2. 基本情報 */}
+                    <div className="grid gap-4 md:grid-cols-2 mb-4">
                         <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">会場名</label>
-                            <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="会場名" value={newName} onChange={e => setNewName(e.target.value)} />
+                            <label className="text-xs text-gray-400 mb-1">会場名 <span className="text-red-500 text-[10px] border border-red-500/50 px-1 rounded ml-1">必須</span></label>
+                            <input 
+                                className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" 
+                                placeholder="会場名" 
+                                value={newName} 
+                                onChange={e => setNewName(e.target.value)} 
+                            />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                             {/* 変更箇所：団体名を入力不可にしました */}
-                             <div className="flex flex-col">
-                                 <label className="text-xs text-gray-500">団体・クラス名 (変更不可)</label>
-                                 <input 
-                                     disabled 
-                                     className="bg-gray-700 p-2 rounded text-gray-400 cursor-not-allowed border border-gray-600" 
-                                     value={department} 
-                                 />
-                             </div>
-                             <div className="flex flex-col">
-                                <label className="text-xs text-gray-500">画像URL</label>
-                                <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
-                             </div>
+                        <div className="flex flex-col">
+                            <label className="text-xs text-gray-500 mb-1">団体・クラス名 <span className="text-[10px] bg-gray-700 px-1 rounded text-gray-400">変更不可</span></label>
+                            <input 
+                                disabled 
+                                className="bg-gray-800 p-2 rounded text-gray-400 cursor-not-allowed border border-gray-700" 
+                                value={department} 
+                            />
                         </div>
                     </div>
 
-                    {/* 時間・設定 */}
-                    <div className="grid grid-cols-4 gap-2 mb-2">
+                    {/* 3. 画像URL */}
+                    <div className="mb-4">
                         <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">開始</label>
-                            <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                        </div>
-                        <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">終了</label>
-                            <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-1 rounded text-sm"/>
-                        </div>
-                        <div className="flex flex-col">
-                            <label className="text-xs text-gray-500">間隔(分)</label>
-                            <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="分"/>
-                        </div>
-                        <div className="flex flex-col">
-                             <label className="text-xs text-gray-500">定員(組)</label>
-                            <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-1 rounded text-sm" placeholder="定員"/>
+                            <label className="text-xs text-gray-400 mb-1">画像URL (Google Drive等) <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span></label>
+                            <input 
+                                className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none w-full" 
+                                placeholder="https://..." 
+                                value={imageUrl} 
+                                onChange={e => setImageUrl(convertGoogleDriveLink(e.target.value))} 
+                            />
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3 mb-6 p-2 bg-gray-900 rounded">
-                        <label className="text-xs text-gray-400">1組の最大人数:</label>
-                        <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm" />
-                        <div className="w-px h-4 bg-gray-600 mx-2"></div>
-                        <label className="text-xs text-white flex items-center gap-2 cursor-pointer font-bold">
-                            <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} className="w-4 h-4" />
-                            <span className={isPaused ? "text-red-500" : "text-gray-400"}>受付を緊急停止する</span>
-                        </label>
+                    {/* 4. 説明文 (追加) */}
+                    <div className="mb-4">
+                      <label className="text-xs text-gray-400 mb-1 block">会場説明文 <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span> <span className="text-[10px] text-gray-500 ml-1">※最大500文字</span></label>
+                      <textarea 
+                          className="w-full bg-gray-700 p-2 rounded text-white h-24 text-sm border border-gray-600 focus:border-blue-500 outline-none resize-none"
+                          placeholder="会場のアピールポイントや注意事項を入力してください。"
+                          maxLength={500}
+                          value={description}
+                          onChange={e => setDescription(e.target.value)}
+                      />
+                      <div className="text-right text-xs text-gray-500">{description.length}/500</div>
+                    </div>
+
+                    {/* 5. 時間・予約設定 */}
+                    <div className="bg-gray-750 p-3 rounded border border-gray-600 mb-4 bg-gray-900/30">
+                        <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider">Time & Capacity Settings</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+                            <div className="flex flex-col">
+                                <label className="text-[10px] text-gray-400 mb-1">開始時間 <span className="text-red-500">*</span></label>
+                                <input type="time" value={openTime} onChange={e => setOpenTime(e.target.value)} className="bg-gray-700 p-2 rounded text-sm outline-none border border-gray-600 focus:border-blue-500"/>
+                            </div>
+                            <div className="flex flex-col">
+                                <label className="text-[10px] text-gray-400 mb-1">終了時間 <span className="text-red-500">*</span></label>
+                                <input type="time" value={closeTime} onChange={e => setCloseTime(e.target.value)} className="bg-gray-700 p-2 rounded text-sm outline-none border border-gray-600 focus:border-blue-500"/>
+                            </div>
+                            <div className="flex flex-col">
+                                <label className="text-[10px] text-gray-400 mb-1">1枠の時間(分) <span className="text-red-500">*</span></label>
+                                <input type="number" value={duration} onChange={e => setDuration(Number(e.target.value))} className="bg-gray-700 p-2 rounded text-sm outline-none border border-gray-600 focus:border-blue-500" placeholder="分"/>
+                            </div>
+                            <div className="flex flex-col">
+                                <label className="text-[10px] text-gray-400 mb-1">枠ごとの定員(組) <span className="text-red-500">*</span></label>
+                                <input type="number" value={capacity} onChange={e => setCapacity(Number(e.target.value))} className="bg-gray-700 p-2 rounded text-sm outline-none border border-gray-600 focus:border-blue-500" placeholder="定員"/>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-6 p-2 bg-gray-800 rounded border border-gray-700">
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-gray-400">1組の最大人数:</label>
+                                <input type="number" value={groupLimit} onChange={e => setGroupLimit(Number(e.target.value))} className="w-16 bg-gray-700 p-1 rounded text-sm outline-none text-center border border-gray-600 focus:border-blue-500" />
+                            </div>
+                            <div className="w-px h-4 bg-gray-600"></div>
+                            <label className="text-xs text-white flex items-center gap-2 cursor-pointer font-bold select-none">
+                                <input type="checkbox" checked={isPaused} onChange={e => setIsPaused(e.target.checked)} className="accent-red-500 w-4 h-4" />
+                                <span className={isPaused ? "text-red-400" : "text-gray-400"}>受付を緊急停止する</span>
+                            </label>
+                        </div>
                     </div>
 
                     <div className="flex gap-2">
-                        <button onClick={handleSave} className="flex-1 bg-blue-600 hover:bg-blue-500 py-3 rounded font-bold transition shadow-lg shadow-blue-900/40">変更を保存</button>
-                        <button onClick={resetForm} className="bg-gray-700 hover:bg-gray-600 px-6 rounded text-sm transition">キャンセル</button>
+                        <button onClick={handleSave} className="flex-1 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 py-3 rounded font-bold transition shadow-lg shadow-blue-900/40">変更を保存</button>
+                        <button onClick={resetForm} className="bg-gray-700 hover:bg-gray-600 px-6 rounded text-sm transition border border-gray-600">キャンセル</button>
                     </div>
                 </div>
             ) : (
@@ -507,6 +560,13 @@ export default function AdminPage() {
 
                     {/* 予約リスト（時間ごと） */}
                     <div className="p-4 space-y-6">
+                        {/* 説明文表示 (追加) */}
+                        {targetShop.description && (
+                            <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
+                                {targetShop.description}
+                            </div>
+                        )}
+
                         {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
                             const slotCount = targetShop.slots[time] || 0;
                             const isFull = slotCount >= targetShop.capacity;
