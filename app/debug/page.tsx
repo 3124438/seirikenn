@@ -1,3 +1,4 @@
+// ＃予約画面 (app/debug/page.tsx)
 "use client";
 import { useState, useEffect } from "react";
 // 階層に合わせてパスを調整
@@ -5,7 +6,7 @@ import { db, auth } from "../../firebase";
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-// GoogleドライブのURLを自動変換する関数（追加）
+// GoogleドライブのURLを自動変換する関数
 const convertGoogleDriveLink = (url: string) => {
   if (!url) return "";
   if (!url.includes("drive.google.com") || url.includes("export=view")) {
@@ -37,7 +38,7 @@ export default function AdminPage() {
   const [newName, setNewName] = useState("");
   const [department, setDepartment] = useState(""); 
   const [imageUrl, setImageUrl] = useState("");     
-  const [description, setDescription] = useState(""); // ★追加: 会場説明文
+  const [description, setDescription] = useState(""); // 会場説明文
   const [password, setPassword] = useState("");
   
   const [groupLimit, setGroupLimit] = useState(4);
@@ -180,7 +181,7 @@ export default function AdminPage() {
     setNewName(shop.name);
     setDepartment(shop.department || ""); 
     setImageUrl(shop.imageUrl || "");
-    setDescription(shop.description || ""); // ★追加
+    setDescription(shop.description || ""); 
     setPassword(shop.password);
     setGroupLimit(shop.groupLimit || 4); 
     setOpenTime(shop.openTime);
@@ -230,7 +231,7 @@ export default function AdminPage() {
       name: newName, 
       department,
       imageUrl,
-      description, // ★追加
+      description, 
       password, groupLimit,
       openTime, closeTime, duration, capacity, isPaused, slots
     };
@@ -591,10 +592,14 @@ export default function AdminPage() {
                                             return (
                                                 <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
                                                     <div>
-                                                        <div className="font-mono font-bold text-yellow-400">
-                                                            ID: {res.userId}
+                                                        <div className="font-mono font-bold text-yellow-400 flex items-center">
+                                                            <span>ID: {res.userId}</span>
+                                                            {/* ▼ 追加: 人数表示 (データがない場合は1名とする) ▼ */}
+                                                            <span className="ml-2 text-sm text-white font-normal bg-gray-600 px-2 py-0.5 rounded-full">
+                                                                {res.count || 1}名
+                                                            </span>
                                                         </div>
-                                                        <div className="text-xs text-gray-300">
+                                                        <div className="text-xs text-gray-300 mt-1">
                                                             {res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}
                                                         </div>
                                                     </div>
