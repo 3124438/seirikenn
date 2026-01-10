@@ -32,7 +32,7 @@ export default function SuperAdminPage() {
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
   const [password, setPassword] = useState("");
-   
+    
   const [department, setDepartment] = useState(""); // 団体名
   const [imageUrl, setImageUrl] = useState("");     // 画像URL
   const [description, setDescription] = useState(""); // 会場説明文
@@ -65,8 +65,12 @@ export default function SuperAdminPage() {
     }
     setMyUserId(stored);
 
+    // ★修正ポイント: 増殖バグ防止
+    // onSnapshotはデータ変更時に毎回新しい配列を返しますが、
+    // ここで確実にStateを丸ごと置き換えることで、画面上の増殖を防ぎます。
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
-      setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+      const newData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAttractions(newData);
     });
     return () => unsub();
   }, []);
@@ -244,25 +248,41 @@ export default function SuperAdminPage() {
       await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
 
-  // --- ★ 順番待ちキュー操作 (バグ修正済み) ---
+  // --- ★ 順番待ちキュー操作 (修正済み) ---
   const updateQueueStatus = async (shop: any, ticket: any, newStatus: 'waiting' | 'ready' | 'completed' | 'canceled') => {
     // 確認ダイアログ
     let msg = "";
     if (newStatus === 'ready') msg = "呼び出しを行いますか？\n（ユーザーの画面が赤くなります）";
-    if (newStatus === 'completed') msg = "【強制入場】\nパスワード入力をスキップして入場済みにしますか？";
-    if (newStatus === 'canceled') msg = "【強制取消】\nこのチケットを無効にしますか？";
-     
+    if (newStatus === 'completed') msg = "【入場処理】\nこのチケットを入場済みにし、リストから削除しますか？";
+    if (newStatus === 'canceled') msg = "【強制取消】\nこのチケットを無効にし、リストから削除しますか？";
+      
     if (newStatus !== 'waiting' && !confirm(msg)) return;
 
-    // ★重要: userIdで照合するように変更 (ticketIdは未定義の可能性があるため)
-    const updatedQueue = shop.queue.map((t: any) => {
-        if (t.userId === ticket.userId) {
-            return { ...t, status: newStatus };
-        }
-        return t;
-    });
-
-    await updateDoc(doc(db, "attractions", shop.id), { queue: updatedQueue });
+    // ★修正ポイント: 入場(completed)または取消(canceled)ならデータを消す
+    if (newStatus === 'completed' || newStatus === 'canceled') {
+        // ticketIdがあればそれで、なければuserIdで一致するものを除外（削除）
+        const newQueue = shop.queue.filter((t: any) => {
+            if (ticket.ticketId) {
+                return t.ticketId !== ticket.ticketId;
+            } else {
+                return t.userId !== ticket.userId; // 旧データ互換
+            }
+        });
+        await updateDoc(doc(db, "attractions", shop.id), { queue: newQueue });
+    
+    } else {
+        // ★修正ポイント: ステータス更新（呼び出しなど）
+        const updatedQueue = shop.queue.map((t: any) => {
+            // ticketId で厳密に照合
+            const isMatch = ticket.ticketId ? (t.ticketId === ticket.ticketId) : (t.userId === ticket.userId);
+            
+            if (isMatch) {
+                return { ...t, status: newStatus };
+            }
+            return t;
+        });
+        await updateDoc(doc(db, "attractions", shop.id), { queue: updatedQueue });
+    }
   };
 
   // 表示ヘルパー
@@ -276,8 +296,19 @@ export default function SuperAdminPage() {
 
   const getQueueList = (shop: any) => {
       if (!shop.queue) return { active: [], history: [] };
+      // 入場(completed)は削除されるため、ここには基本的に waiting か ready しか残りません
       const active = shop.queue.filter((t: any) => ['waiting', 'ready'].includes(t.status));
+      // ※ historyは「削除」仕様になったため、空になるか、もし誤って残っている場合のみ表示されます
       const history = shop.queue.filter((t: any) => ['completed', 'canceled'].includes(t.status));
+      
+      // ソート: 呼び出し中(ready)を先頭に、あとはticketId順(昇順)
+      active.sort((a: any, b: any) => {
+          if (a.status === 'ready' && b.status !== 'ready') return -1;
+          if (a.status !== 'ready' && b.status === 'ready') return 1;
+          // ticketId (文字列) で比較
+          return (a.ticketId || "0").localeCompare(b.ticketId || "0");
+      });
+
       return { active, history };
   };
 
@@ -291,7 +322,7 @@ export default function SuperAdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         <div className="mb-6 border-b border-gray-700 pb-4">
           <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
-          
+           
           <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
               <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
               <div className="mt-4 pt-4 border-t border-gray-700">
@@ -517,8 +548,9 @@ export default function SuperAdminPage() {
                                                 return (
                                                     <div key={ticket.userId || index} className={`flex items-center justify-between p-3 rounded-lg border ${isReady ? 'bg-red-900/30 border-red-500 animate-pulse-slow' : 'bg-gray-700 border-gray-600'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
                                                         <div className="flex items-center gap-4">
-                                                            <div className={`text-2xl font-mono font-bold w-12 text-center ${isReady ? 'text-red-400' : 'text-gray-400'}`}>
-                                                                #{ticket.ticketNumber || index + 1}
+                                                            {/* ★修正ポイント: 6桁IDを表示 (無ければindex) */}
+                                                            <div className={`text-2xl font-mono font-bold w-20 text-center ${isReady ? 'text-red-400' : 'text-gray-400'}`}>
+                                                                {ticket.ticketId ? ticket.ticketId : `#${index + 1}`}
                                                             </div>
                                                             <div>
                                                                 <div className="flex items-center gap-2">
@@ -540,11 +572,11 @@ export default function SuperAdminPage() {
                                                                     🔔 呼出
                                                                 </button>
                                                             )}
-                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'completed')} className="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
-                                                                ✅ 強制入場
+                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'completed')} className="bg-green-700 hover:bg-green-600 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
+                                                                ✅ 入場
                                                             </button>
                                                             <button onClick={() => updateQueueStatus(targetShop, ticket, 'canceled')} className="bg-gray-600 hover:bg-gray-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
-                                                                🗑️ 強制取消
+                                                                ✖ 取消
                                                             </button>
                                                         </div>
                                                     </div>
@@ -555,46 +587,43 @@ export default function SuperAdminPage() {
                                 })()}
                             </div>
                         ) : (
-                            // --- 時間予約制のUI (既存) ---
+                            // --- 時間予約制のUI ---
                             <div>
-                                {Object.entries(getReservationsByTime(targetShop)).map(([time, reservations]: any) => {
-                                    const slotCount = targetShop.slots[time] || 0;
-                                    const isFull = slotCount >= targetShop.capacity;
-                                    return (
-                                        <div key={time} className={`border rounded-lg p-3 mb-4 ${isFull ? 'border-red-500/50 bg-red-900/10' : 'border-gray-600 bg-gray-900/50'}`}>
+                                <h3 className="text-lg font-bold mb-4 text-blue-400 border-b border-gray-700 pb-2">📅 予約リスト (Reservations)</h3>
+                                <div className="space-y-4">
+                                    {Object.entries(getReservationsByTime(targetShop)).map(([time, resList]: any) => (
+                                        <div key={time} className="bg-gray-800/50 rounded-lg p-3 border border-gray-700">
                                             <div className="flex justify-between items-center mb-2 border-b border-gray-700 pb-2">
-                                                <h3 className="font-bold text-lg text-blue-300">{time}</h3>
-                                                <span className={`text-xs font-bold px-2 py-1 rounded ${isFull ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`}>
-                                                    {slotCount} / {targetShop.capacity}組
-                                                </span>
+                                                <h4 className="font-mono text-xl font-bold text-yellow-500">{time}</h4>
+                                                <div className="text-xs text-gray-400">
+                                                    予約: {resList.length}組 / 残り枠: {(targetShop.capacity || 0) - (targetShop.slots?.[time] || 0)}
+                                                </div>
                                             </div>
-                                            {reservations.length === 0 ? (
-                                                <p className="text-xs text-gray-500 text-center py-2">予約なし</p>
+                                            {resList.length === 0 ? (
+                                                <div className="text-xs text-gray-600 py-1">予約なし</div>
                                             ) : (
                                                 <div className="space-y-2">
-                                                    {reservations.map((res: any, idx: number) => (
-                                                        <div key={idx} className="bg-gray-800 p-2 rounded flex justify-between items-center border border-gray-700">
+                                                    {resList.map((res: any, idx: number) => (
+                                                        <div key={idx} className={`flex justify-between items-center p-2 rounded bg-gray-700 ${res.status === 'used' ? 'opacity-50 grayscale' : ''}`}>
                                                             <div>
-                                                                <div className="font-mono font-bold text-white">{res.userId}</div>
-                                                                <div className="text-xs text-gray-400">{res.count}名 | {new Date(res.timestamp).toLocaleTimeString()}予約</div>
+                                                                <div className="font-bold font-mono text-sm">{res.userId}</div>
+                                                                <div className="text-xs text-gray-400">{res.count}名</div>
                                                             </div>
-                                                            <div className="flex gap-1">
-                                                                {res.status === "used" ? (
-                                                                    <span className="text-xs bg-gray-600 text-gray-300 px-2 py-1 rounded">入場済</span>
+                                                            <div className="flex gap-2">
+                                                                {res.status !== 'used' ? (
+                                                                    <button onClick={() => toggleReservationStatus(targetShop, res, 'used')} className="bg-green-600 text-[10px] px-2 py-1 rounded">入場</button>
                                                                 ) : (
-                                                                    <>
-                                                                       <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="text-xs bg-green-700 hover:bg-green-600 px-2 py-1 rounded text-white">入場</button>
-                                                                       <button onClick={() => cancelReservation(targetShop, res)} className="text-xs bg-red-900 hover:bg-red-800 px-2 py-1 rounded text-red-200 border border-red-800">取消</button>
-                                                                    </>
+                                                                    <button onClick={() => toggleReservationStatus(targetShop, res, 'reserved')} className="bg-gray-500 text-[10px] px-2 py-1 rounded">戻す</button>
                                                                 )}
+                                                                <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-900/50 text-red-200 text-[10px] px-2 py-1 rounded border border-red-900">取消</button>
                                                             </div>
                                                         </div>
                                                     ))}
                                                 </div>
                                             )}
                                         </div>
-                                    );
-                                })}
+                                    ))}
+                                </div>
                             </div>
                         )}
                     </div>
