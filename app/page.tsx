@@ -7,16 +7,16 @@ import { signInAnonymously } from "firebase/auth";
 
 // 型定義
 type Ticket = {
-  uniqueKey: string; // 重複排除のためのユニークキー
+  uniqueKey: string;
   shopId: string;
   shopName: string;
-  time: string; // 時間枠 または "順番待ち"
+  time: string;
   timestamp: number;
   status: "reserved" | "waiting" | "ready" | "used" | "done";
   count: number;
   isQueue?: boolean;
-  ticketId?: string; // 6桁の整理券番号
-  peopleAhead?: number;
+  ticketId?: string;
+  peopleAhead?: number; // ここには「待ち組数」が入ります
 };
 
 export default function Home() {
@@ -27,7 +27,8 @@ export default function Home() {
   const [isBanned, setIsBanned] = useState(false);
 
   // 申し込み画面用の状態
-  const [draftBooking, setDraftBooking] = useState<{ time: string; remaining: number; mode: "slot" | "queue" } | null>(null);
+  // maxPeopleを追加: そのチケットで選択できる最大人数
+  const [draftBooking, setDraftBooking] = useState<{ time: string; remaining: number; mode: "slot" | "queue"; maxPeople: number } | null>(null);
   const [peopleCount, setPeopleCount] = useState<number>(1);
 
   // 1. 初期化とデータ監視
@@ -49,7 +50,7 @@ export default function Home() {
             setDoc(userDocRef, {
                 userId: storedId,
                 createdAt: serverTimestamp(),
-                isBanned: false       
+                isBanned: false        
             }).catch(err => console.error("User regist error:", err));
         }
     });
@@ -57,13 +58,12 @@ export default function Home() {
         if (snap.exists()) setIsBanned(snap.data().isBanned === true);
     });
 
-    // アトラクション情報の監視（ここが増殖防止の肝です）
+    // アトラクション情報の監視
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const shopData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(shopData);
 
-      // ★★★ 増殖バグ修正の決定版 ★★★
-      // 毎回、空の配列からスタートします
+      // チケット情報の構築
       const newMyTickets: Ticket[] = [];
       
       shopData.forEach((shop: any) => {
@@ -89,16 +89,16 @@ export default function Home() {
         if (shop.queue) {
           shop.queue.forEach((q: any) => {
             if (q.userId === storedId) {
-              // 自分より前に並んでいる人を計算
-              let peopleAhead = 0;
+              // ▼▼▼ 修正: 自分より前の「組数」を計算 ▼▼▼
+              let groupsAhead = 0;
               if (q.status === 'waiting') {
-                // 自分より小さい ticketNumber を持っている waiting の人を数える
-                // ※ ticketId は文字列なので数値比較のために変換、なければ0扱い
                 const myNum = parseInt(q.ticketId || "999999");
-                peopleAhead = shop.queue.filter((other: any) => 
+                // filterで抽出した後、lengthで「組数」を取得 (以前はreduceで人数合計していた)
+                groupsAhead = shop.queue.filter((other: any) => 
                   other.status === 'waiting' && parseInt(other.ticketId || "999999") < myNum
-                ).reduce((sum: number, t: any) => sum + (t.count || 1), 0);
+                ).length;
               }
+              // ▲▲▲ 修正終わり ▲▲▲
 
               newMyTickets.push({
                 uniqueKey: `queue_${shop.id}_${q.ticketId}`,
@@ -109,22 +109,21 @@ export default function Home() {
                 status: q.status,
                 count: q.count || 1,
                 isQueue: true,
-                ticketId: q.ticketId, // 6桁ID
-                peopleAhead: peopleAhead
+                ticketId: q.ticketId,
+                peopleAhead: groupsAhead // 変数名は peopleAhead のままですが、中身は組数
               });
             }
           });
         }
       });
 
-      // 並び替え（準備完了が最優先、あとは新しい順）
+      // 並び替え
       newMyTickets.sort((a, b) => {
         if (a.status === 'ready' && b.status !== 'ready') return -1;
         if (a.status !== 'ready' && b.status === 'ready') return 1;
         return b.timestamp - a.timestamp;
       });
 
-      // 完全に新しいリストで上書き（これで増殖しません）
       setMyTickets(newMyTickets);
     });
 
@@ -146,29 +145,42 @@ export default function Home() {
       );
   }
 
-  // 時間選択（予約）
+  // ▼▼▼ 修正: 時間選択（予約）ロジック ▼▼▼
   const handleSelectTime = (shop: any, time: string) => {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
+    
+    // 定員の計算: groupLimit (枠ごとの定員・組) を使用
+    const limitGroups = shop.groupLimit || 0; 
     const current = shop.slots[time] || 0;
-    const remaining = (shop.groupLimit || shop.capacity) - current;
+    const remaining = limitGroups - current;
+
     if (remaining <= 0) return alert("満席です。");
     if (shop.isPaused) return alert("停止中です。");
     
-    setPeopleCount(1);
-    setDraftBooking({ time, remaining, mode: "slot" });
-  };
+    // 1組の最大人数 (capacity) を取得
+    const maxPeople = shop.capacity || 10;
 
-  // 順番待ち参加ボタン
+    setPeopleCount(1);
+    // mode: slot, remaining: 残り組数, maxPeople: 選択可能な最大人数
+    setDraftBooking({ time, remaining, mode: "slot", maxPeople });
+  };
+  // ▲▲▲ 修正終わり ▲▲▲
+
+  // ▼▼▼ 修正: 順番待ち参加ボタン ▼▼▼
   const handleJoinQueue = (shop: any) => {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
-    // 重複チェック: 同じ店に並んでいないか
     if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
     if (shop.isPaused) return alert("停止中です。");
 
+    // 順番待ちでも「1組の最大人数」を適用
+    const maxPeople = shop.capacity || 10;
+
     setPeopleCount(1);
-    setDraftBooking({ time: "順番待ち", remaining: 10, mode: "queue" });
+    // remainingは順番待ちでは表示に使わないため適当な値、maxPeopleを渡す
+    setDraftBooking({ time: "順番待ち", remaining: 999, mode: "queue", maxPeople });
   };
+  // ▲▲▲ 修正終わり ▲▲▲
 
   // 予約・発券の確定処理
   const handleConfirmBooking = async () => {
@@ -182,38 +194,36 @@ export default function Home() {
       
       if (draftBooking.mode === "slot") {
         // 時間予約
+        // 注意: ここで increment(1) に変更（「組数」で枠を管理するため）
+        // もし「人数」で枠を減らしたい場合は increment(peopleCount) に戻してください
+        // 今回の要件「枠ごとの定員(組)」に従い、1予約につき1枠消費とします。
         const reservationData = { userId, time: draftBooking.time, timestamp, status: "reserved", count: peopleCount };
         await updateDoc(shopRef, { 
-            [`slots.${draftBooking.time}`]: increment(peopleCount),
+            [`slots.${draftBooking.time}`]: increment(1), // 組数ベースで消費
             reservations: arrayUnion(reservationData)
         });
       } else {
-        // ★★★ 順番待ち（6桁ID生成ロジック） ★★★
-        
-        // 1. 最新のデータを取得してIDを計算
+        // 順番待ち
         const shopSnap = await getDoc(shopRef);
         const currentQueue = shopSnap.data()?.queue || [];
         
-        // 現在の最大IDを探す（文字列なので数値にして比較）
         let maxId = 0;
         currentQueue.forEach((q: any) => {
             const num = parseInt(q.ticketId || "0");
             if (num > maxId) maxId = num;
         });
 
-        // +1 して 6桁にする (例: 5 -> "000006")
         const nextIdNum = maxId + 1;
         const nextTicketId = String(nextIdNum).padStart(6, '0');
 
         const queueData = {
           userId,
-          ticketId: nextTicketId, // これが順番待ちID
+          ticketId: nextTicketId,
           count: peopleCount,
           status: "waiting",
           createdAt: Timestamp.now()
         };
 
-        // 配列に追加
         await updateDoc(shopRef, {
           queue: arrayUnion(queueData)
         });
@@ -240,7 +250,6 @@ export default function Home() {
       const shopData = shopSnap.data();
 
       if (ticket.isQueue) {
-         // ticketId で特定して削除
          const targetQ = shopData.queue?.find((q: any) => q.ticketId === ticket.ticketId);
          if (targetQ) {
            await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
@@ -248,8 +257,9 @@ export default function Home() {
       } else {
          const targetRes = shopData.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.timestamp === ticket.timestamp);
          if (targetRes) {
+           // 組数ベースで枠を戻すため increment(-1)
            await updateDoc(shopRef, { 
-             [`slots.${ticket.time}`]: increment(-(targetRes.count || 1)),
+             [`slots.${ticket.time}`]: increment(-1),
              reservations: arrayRemove(targetRes)
            });
          }
@@ -274,20 +284,11 @@ export default function Home() {
       const shopRef = doc(db, "attractions", shop.id);
 
       if (ticket.isQueue) {
-        // ★順番待ち：入場したらデータを消す
-        // Firestore上の正確なオブジェクトを見つけるために再取得推奨だが、ここでは簡略化して検索
         const targetQ = shop.queue.find((q: any) => q.ticketId === ticket.ticketId);
         if(targetQ) {
-          // arrayRemove で削除 (データが消えます)
           await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
-          
-          // ※もし「履歴」を残したい場合は、別のコレクション（historyなど）にaddDocしてください。
-          // 今回はご要望通り「消える」ようにしています。
         }
       } else {
-        // 予約：入場したらステータスをusedにする（あるいは消す）
-        // 予約の場合は枠管理があるので、消すと枠が空いてしまう恐れがあるため、
-        // 「used」に変える処理のままにしていますが、ここも消したい場合は arrayRemove だけでOKです。
         const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
         if(oldRes) {
             await updateDoc(shopRef, { reservations: arrayRemove(oldRes) });
@@ -311,7 +312,7 @@ export default function Home() {
            </div>
         </div>
         <div className="bg-gray-800 text-white text-center py-1 rounded text-xs font-mono">
-            User ID: {userId}
+           User ID: {userId}
         </div>
       </header>
 
@@ -353,7 +354,8 @@ export default function Home() {
                                 <p className="text-red-600 font-bold text-lg animate-bounce">🔔 呼び出し中です！</p>
                               ) : (
                                 <p className="text-blue-600 font-bold text-sm">
-                                  あなたの前に <span className="text-xl text-blue-800">{t.peopleAhead}</span> 人待ち
+                                  {/* ▼▼▼ 修正: 単位を「組待ち」に変更 ▼▼▼ */}
+                                  あなたの前に <span className="text-xl text-blue-800">{t.peopleAhead}</span> 組待ち
                                 </p>
                               )}
                           </div>
@@ -401,8 +403,9 @@ export default function Home() {
                   </div>
                   <h3 className="font-bold text-lg leading-tight truncate text-gray-800 mb-1">{shop.name}</h3>
                   <div className="text-xs text-gray-400">
+                      {/* 一覧表示の待ち組数: ここも人数合計ではなくlengthで組数を表示 */}
                       {shop.isQueueMode 
-                        ? `待ち人数: ${shop.queue?.filter((q:any)=>q.status==='waiting').reduce((a:number,c:any)=>a+(c.count||1),0)||0}人` 
+                        ? `待ち: ${shop.queue?.filter((q:any)=>q.status==='waiting').length || 0}組` 
                         : `予約可`}
                   </div>
               </div>
@@ -439,15 +442,9 @@ export default function Home() {
                                    <div className="bg-orange-50 p-3 rounded-lg border border-orange-100 min-w-[100px]">
                                       <p className="text-xs text-orange-600">待ち組数</p>
                                       <p className="text-3xl font-bold text-orange-900">
+                                        {/* 待ち組数を表示 (length) */}
                                         {selectedShop.queue?.filter((q:any)=>q.status==='waiting').length || 0}
                                         <span className="text-sm font-normal ml-1">組</span>
-                                      </p>
-                                   </div>
-                                   <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 min-w-[100px]">
-                                      <p className="text-xs text-blue-600">待ち人数</p>
-                                      <p className="text-3xl font-bold text-blue-900">
-                                        {selectedShop.queue?.filter((q:any)=>q.status==='waiting').reduce((s:number, c:any)=>s+(c.count||1), 0) || 0}
-                                        <span className="text-sm font-normal ml-1">人</span>
                                       </p>
                                    </div>
                                 </div>
@@ -462,10 +459,15 @@ export default function Home() {
                         ) : (
                            <div className="grid grid-cols-3 gap-3">
                               {Object.entries(selectedShop.slots || {}).sort().map(([time, count]: any) => {
-                                 const capacity = selectedShop.groupLimit || selectedShop.capacity;
-                                 const isFull = count >= capacity;
-                                 const remaining = capacity - count;
+                                 // ▼▼▼ 修正: ここも定員(組)と最大人数(人)を区別 ▼▼▼
+                                 const limitGroups = selectedShop.groupLimit || 0; // 枠の定員
+                                 // capacity (1組あたりの人数) はここでは枠計算に使わない
+                                 
+                                 const isFull = count >= limitGroups;
+                                 const remaining = limitGroups - count;
                                  const isBooked = activeTickets.some(t => t.shopId === selectedShop.id && t.time === time);
+                                 // ▲▲▲ 修正終わり ▲▲▲
+                                 
                                  return (
                                      <button 
                                        key={time} 
@@ -505,15 +507,17 @@ export default function Home() {
                   onChange={(e) => setPeopleCount(Number(e.target.value))}
                   className="w-full text-lg p-3 border-2 border-gray-200 rounded-lg mb-6"
               >
-                  {[...Array(Math.min(10, draftBooking.remaining))].map((_, i) => (
-                     <option key={i+1} value={i+1}>{i+1}名</option>
+                  {/* ▼▼▼ 修正: 選択肢を 1組の最大人数 (maxPeople) に基づいて生成 ▼▼▼ */}
+                  {[...Array(draftBooking.maxPeople)].map((_, i) => (
+                      <option key={i+1} value={i+1}>{i+1}名</option>
                   ))}
+                  {/* ▲▲▲ 修正終わり ▲▲▲ */}
               </select>
 
               <div className="flex gap-3">
                   <button onClick={() => setDraftBooking(null)} className="flex-1 py-3 bg-gray-100 rounded-lg font-bold text-gray-500">やめる</button>
                   <button onClick={handleConfirmBooking} className={`flex-1 py-3 text-white font-bold rounded-lg shadow ${draftBooking.mode === "queue" ? "bg-orange-500" : "bg-blue-600"}`}>
-                     {draftBooking.mode === "queue" ? "発券する" : "予約する"}
+                      {draftBooking.mode === "queue" ? "発券する" : "予約する"}
                   </button>
               </div>
             </div>
