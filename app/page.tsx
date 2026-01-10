@@ -1,5 +1,3 @@
-
-// ＃予約画面 (app/page.tsx)
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../firebase";
@@ -63,48 +61,67 @@ export default function Home() {
       const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(data);
 
+      // ★★★ 修正ポイント1：重複排除のためのセットを作成 ★★★
+      // ここで「すでに処理したチケットID」を記録し、同じものが来たら無視します
+      const processedTicketIds = new Set<string>();
       const myFoundTickets: Ticket[] = [];
       
       data.forEach((shop: any) => {
+        // --- 時間枠予約 (Slots) の処理 ---
         if (shop.reservations) {
           shop.reservations.forEach((r: any) => {
             if (r.userId === storedId) {
-              myFoundTickets.push({
-                shopId: shop.id,
-                shopName: shop.name,
-                time: r.time,
-                timestamp: r.timestamp,
-                status: r.status,
-                count: r.count || 1,
-                isQueue: false
-              });
+              // 重複チェック用のキーを作成 (ショップID + 時間 + ユーザーID)
+              const uniqueKey = `slot-${shop.id}-${r.time}-${r.userId}`;
+              
+              if (!processedTicketIds.has(uniqueKey)) {
+                processedTicketIds.add(uniqueKey); // 登録済みにする
+
+                myFoundTickets.push({
+                  shopId: shop.id,
+                  shopName: shop.name,
+                  time: r.time,
+                  timestamp: r.timestamp,
+                  status: r.status,
+                  count: r.count || 1,
+                  isQueue: false
+                });
+              }
             }
           });
         }
 
+        // --- 順番待ち (Queue) の処理 ---
         if (shop.queue) {
           shop.queue.forEach((q: any) => {
             if (q.userId === storedId) {
-              let peopleAhead = 0;
-              if (q.status === 'waiting') {
-                const aheadTickets = shop.queue.filter((other: any) => 
-                  other.status === 'waiting' && other.ticketNumber < q.ticketNumber
-                );
-                peopleAhead = aheadTickets.reduce((sum: number, t: any) => sum + (t.count || 1), 0);
-              }
+              // 重複チェック用のキー (ショップID + 表示ID)
+              const uniqueKey = `queue-${shop.id}-${q.displayId}`;
 
-              myFoundTickets.push({
-                shopId: shop.id,
-                shopName: shop.name,
-                time: "順番待ち",
-                timestamp: q.createdAt?.toMillis() || Date.now(),
-                status: q.status,
-                count: q.count || 1,
-                isQueue: true,
-                displayId: q.displayId,
-                ticketNumber: q.ticketNumber,
-                peopleAhead: peopleAhead
-              });
+              if (!processedTicketIds.has(uniqueKey)) {
+                processedTicketIds.add(uniqueKey); // 登録済みにする
+
+                let peopleAhead = 0;
+                if (q.status === 'waiting') {
+                  const aheadTickets = shop.queue.filter((other: any) => 
+                    other.status === 'waiting' && other.ticketNumber < q.ticketNumber
+                  );
+                  peopleAhead = aheadTickets.reduce((sum: number, t: any) => sum + (t.count || 1), 0);
+                }
+
+                myFoundTickets.push({
+                  shopId: shop.id,
+                  shopName: shop.name,
+                  time: "順番待ち",
+                  timestamp: q.createdAt?.toMillis() || Date.now(),
+                  status: q.status,
+                  count: q.count || 1,
+                  isQueue: true,
+                  displayId: q.displayId,
+                  ticketNumber: q.ticketNumber,
+                  peopleAhead: peopleAhead
+                });
+              }
             }
           });
         }
@@ -116,6 +133,7 @@ export default function Home() {
         return b.timestamp - a.timestamp;
       });
 
+      // ★ここできれいになったリストだけをセットします
       setMyTickets(myFoundTickets);
     });
 
@@ -126,6 +144,7 @@ export default function Home() {
   }, []);
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
+  // usedTickets変数は使われていないため削除しても良いですが、念のため残しておきます
   const usedTickets = myTickets.filter(t => ["used", "done"].includes(t.status));
 
   if (isBanned) {
@@ -179,15 +198,13 @@ export default function Home() {
             reservations: arrayUnion(reservationData)
         });
       } else {
-        // ★順番待ちの保存 (Queue)
-        // ランダムID生成を廃止し、userIdを使用する
         const currentQueue = selectedShop.queue || [];
         const maxTicketNum = currentQueue.reduce((max: number, q: any) => Math.max(max, q.ticketNumber || 0), 0);
         const nextTicketNum = maxTicketNum + 1;
 
         const queueData = {
           userId,
-          displayId: userId, // 表示用IDとしてuserIdをそのまま保存
+          displayId: userId,
           ticketNumber: nextTicketNum,
           count: peopleCount,
           status: "waiting",
@@ -218,7 +235,6 @@ export default function Home() {
       const shopData = shopSnap.data();
 
       if (ticket.isQueue) {
-         // displayId = userId なので、これで対象を特定できます
          const targetQ = shopData.queue?.find((q: any) => q.displayId === ticket.displayId);
          if (targetQ) {
            await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
@@ -293,7 +309,7 @@ export default function Home() {
               : "bg-white border-l-4 border-green-500 shadow-lg";
 
             return (
-              <div key={`${t.shopId}-${t.timestamp}`} className={`${cardClass} p-4 rounded relative overflow-hidden`}>
+              <div key={`${t.shopId}-${t.time}-${t.displayId || 'slot'}`} className={`${cardClass} p-4 rounded relative overflow-hidden`}>
                 <div className="flex justify-between items-start mb-3">
                   <div>
                       <h2 className="font-bold text-lg flex items-center gap-2">
@@ -306,7 +322,6 @@ export default function Home() {
                       {t.isQueue ? (
                         <div className="mt-1">
                           <p className="text-sm font-bold text-gray-500">整理券番号 (User ID)</p>
-                          {/* displayIdにはuserIdが入っています */}
                           <p className="text-3xl font-mono font-black text-gray-800 tracking-wider">{t.displayId}</p>
                           
                           {isReady ? (
@@ -418,7 +433,7 @@ export default function Home() {
                               >
                                 <span>🏃</span> 順番待ちに並ぶ
                               </button>
-                              <p className="text-xs text-gray-400 mt-3">※入場可能になってから時間がたちすぎるとチケットがキャンセルされる可能性があります。</p>
+                              {/* 修正ポイント2: キャンセル警告文を削除しました */}
                            </div>
                         ) : (
                            <div className="grid grid-cols-3 gap-3">
@@ -483,4 +498,3 @@ export default function Home() {
     </div>
   );
 }
-
