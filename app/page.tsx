@@ -10,7 +10,7 @@ type Ticket = {
   uniqueKey: string;
   shopId: string;
   shopName: string;
-  shopDepartment?: string; // ★追加: 団体名
+  shopDepartment?: string; // 団体名
   time: string;
   timestamp: number;
   status: "reserved" | "waiting" | "ready" | "used" | "done";
@@ -35,7 +35,6 @@ export default function Home() {
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
     
-    // ユーザーIDの確保
     let storedId = localStorage.getItem("bunkasai_user_id");
     if (!storedId) {
       storedId = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -43,7 +42,6 @@ export default function Home() {
     }
     setUserId(storedId);
 
-    // ユーザー情報の監視
     const userDocRef = doc(db, "users", storedId);
     getDoc(userDocRef).then((snap) => {
         if (!snap.exists()) {
@@ -58,7 +56,6 @@ export default function Home() {
         if (snap.exists()) setIsBanned(snap.data().isBanned === true);
     });
 
-    // アトラクション情報の監視
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const shopData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(shopData);
@@ -66,7 +63,6 @@ export default function Home() {
       const newMyTickets: Ticket[] = [];
       
       shopData.forEach((shop: any) => {
-        // A. 時間枠予約 (Slots) を探す
         if (shop.reservations) {
           shop.reservations.forEach((r: any) => {
             if (r.userId === storedId) {
@@ -74,7 +70,7 @@ export default function Home() {
                 uniqueKey: `slot_${shop.id}_${r.time}`,
                 shopId: shop.id,
                 shopName: shop.name,
-                shopDepartment: shop.department, // ★追加: 団体名を取得
+                shopDepartment: shop.department,
                 time: r.time,
                 timestamp: r.timestamp,
                 status: r.status,
@@ -85,11 +81,9 @@ export default function Home() {
           });
         }
 
-        // B. 順番待ち (Queue) を探す
         if (shop.queue) {
           shop.queue.forEach((q: any) => {
             if (q.userId === storedId) {
-              // 自分より前の「組数」を計算
               let groupsAhead = 0;
               if (q.status === 'waiting') {
                 const myNum = parseInt(q.ticketId || "999999");
@@ -102,7 +96,7 @@ export default function Home() {
                 uniqueKey: `queue_${shop.id}_${q.ticketId}`,
                 shopId: shop.id,
                 shopName: shop.name,
-                shopDepartment: shop.department, // ★追加: 団体名を取得
+                shopDepartment: shop.department,
                 time: "順番待ち",
                 timestamp: q.createdAt?.toMillis() || Date.now(),
                 status: q.status,
@@ -116,7 +110,6 @@ export default function Home() {
         }
       });
 
-      // 並び替え
       newMyTickets.sort((a, b) => {
         if (a.status === 'ready' && b.status !== 'ready') return -1;
         if (a.status !== 'ready' && b.status === 'ready') return 1;
@@ -134,7 +127,6 @@ export default function Home() {
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
-  // BAN画面
   if (isBanned) {
       return (
           <div className="min-h-screen bg-red-900 text-white flex flex-col items-center justify-center p-4 text-center">
@@ -144,7 +136,6 @@ export default function Home() {
       );
   }
 
-  // 時間選択（予約）
   const handleSelectTime = (shop: any, time: string) => {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
@@ -162,7 +153,6 @@ export default function Home() {
     setDraftBooking({ time, remaining, mode: "slot", maxPeople });
   };
 
-  // 順番待ち参加ボタン
   const handleJoinQueue = (shop: any) => {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
@@ -174,7 +164,6 @@ export default function Home() {
     setDraftBooking({ time: "順番待ち", remaining: 999, mode: "queue", maxPeople });
   };
 
-  // 予約・発券の確定処理
   const handleConfirmBooking = async () => {
     if (!selectedShop || !draftBooking) return;
 
@@ -227,7 +216,6 @@ export default function Home() {
     }
   };
 
-  // キャンセル処理
   const handleCancel = async (ticket: Ticket) => {
     if (!confirm("キャンセルしますか？")) return;
     try {
@@ -254,7 +242,6 @@ export default function Home() {
     } catch (e) { alert("キャンセル失敗"); }
   };
 
-  // 入場処理
   const handleEnter = async (ticket: Ticket) => {
     const shop = attractions.find(s => s.id === ticket.shopId);
     if (!shop) return;
@@ -316,7 +303,6 @@ export default function Home() {
               <div key={t.uniqueKey} className={`${cardClass} p-4 rounded relative`}>
                 <div className="flex justify-between items-start mb-3">
                   <div>
-                      {/* ★追加: チケットに団体名を表示 */}
                       {t.shopDepartment && (
                         <p className="text-xs font-bold text-gray-500 mb-0.5">{t.shopDepartment}</p>
                       )}
@@ -390,7 +376,6 @@ export default function Home() {
                       {shop.isQueueMode && <span className="bg-orange-100 text-orange-700 border-orange-200 border text-[10px] px-2 py-0.5 rounded font-bold">順番待ち制</span>}
                       {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
                   </div>
-                  {/* ★追加: リストに団体名を表示 */}
                   {shop.department && (
                     <p className="text-xs text-blue-600 font-bold mb-0.5">{shop.department}</p>
                   )}
@@ -409,13 +394,29 @@ export default function Home() {
         // 詳細・予約画面
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden pb-10">
             <div className="relative">
-               <button onClick={() => { setSelectedShop(null); setDraftBooking(null); }} className="absolute top-2 left-2 bg-black/60 text-white px-3 py-1 rounded-full text-sm backdrop-blur-sm z-10">← 戻る</button>
-               <div className="p-4 pt-12 border-b bg-gray-50">
-                   {/* ★追加: 詳細画面に団体名を表示 */}
+               {/* ★追加: 詳細ヘッダー画像 */}
+               {selectedShop.imageUrl && (
+                 <div className="w-full h-56 bg-gray-200">
+                   <img 
+                     src={selectedShop.imageUrl} 
+                     alt={selectedShop.name} 
+                     className="w-full h-full object-cover" 
+                   />
+                 </div>
+               )}
+
+               <button 
+                 onClick={() => { setSelectedShop(null); setDraftBooking(null); }} 
+                 className="absolute top-3 left-3 bg-black/50 text-white px-4 py-2 rounded-full text-sm backdrop-blur-md z-10 hover:bg-black/70 transition"
+               >
+                 ← 戻る
+               </button>
+
+               <div className="p-5 border-b bg-gray-50">
                    {selectedShop.department && (
                      <p className="text-sm font-bold text-blue-600 mb-1">{selectedShop.department}</p>
                    )}
-                   <h2 className="text-2xl font-bold leading-tight">{selectedShop.name}</h2>
+                   <h2 className="text-2xl font-bold leading-tight text-gray-900">{selectedShop.name}</h2>
                </div>
             </div>
 
