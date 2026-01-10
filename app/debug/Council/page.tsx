@@ -1,4 +1,3 @@
-// ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
 import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整
@@ -221,6 +220,9 @@ export default function SuperAdminPage() {
   const cancelReservation = async (shop: any, res: any) => {
       if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
+      // ★ 予約削除時に人数分だけスロットを戻す処理が必要な場合はここを調整しますが、
+      // 基本実装ではスロット数は「組数」か「人数」かによるため、ここでは既存ロジック(slots - 1)のままにします。
+      // もしcapacityが「組数」管理であれば -1 で正解です。
       const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
       await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
@@ -262,7 +264,7 @@ export default function SuperAdminPage() {
                       <input className="bg-gray-700 p-2 rounded text-white" placeholder="画像URL (任意: Discord等のリンク)" value={imageUrl} onChange={e => setImageUrl(convertGoogleDriveLink(e.target.value))} />
                   </div>
 
-                  {/* ★ 会場説明文入力エリア (新規追加) */}
+                  {/* ★ 会場説明文入力エリア */}
                   <div className="mb-2">
                       <label className="text-xs text-gray-500 mb-1 block">会場説明文 (任意: 最大500文字)</label>
                       <textarea 
@@ -302,7 +304,7 @@ export default function SuperAdminPage() {
               <input className="flex-1 bg-transparent text-white outline-none" placeholder="ユーザーID検索..." value={searchUserId} onChange={e => setSearchUserId(e.target.value)} />
           </div>
 
-          {/* ダッシュボード (省略なし) */}
+          {/* ダッシュボード */}
           <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
               <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
               <div className="flex justify-between items-center mb-6 bg-gray-900 p-4 rounded-lg border border-gray-800">
@@ -327,7 +329,7 @@ export default function SuperAdminPage() {
                     return (
                         <button key={shop.id} onClick={() => setExpandedShopId(shop.id)} className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}>
                             <div className="flex items-center gap-4">
-                                {/* 画像（任意表示・なければプレースホルダー） */}
+                                {/* 画像 */}
                                 {shop.imageUrl ? (
                                     <img src={shop.imageUrl} alt={shop.name} referrerPolicy="no-referrer" className="w-14 h-14 object-cover rounded-md bg-gray-900 shrink-0" />
                                 ) : (
@@ -380,7 +382,7 @@ export default function SuperAdminPage() {
                     </div>
 
                     <div className="p-4 space-y-6">
-                        {/* ★ 会場説明文の表示 (ここに追加) */}
+                        {/* ★ 会場説明文の表示 */}
                         {targetShop.description && (
                             <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
                                 {targetShop.description}
@@ -403,7 +405,11 @@ export default function SuperAdminPage() {
                                             return (
                                                 <div key={res.timestamp} className={`flex justify-between items-center p-2 rounded ${res.status === 'used' ? 'bg-gray-800 opacity-60' : 'bg-gray-700'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
                                                     <div>
-                                                        <div className="font-mono font-bold text-yellow-400">ID: {res.userId}</div>
+                                                        <div className="font-mono font-bold text-yellow-400 flex items-center gap-2">
+                                                          {/* ★変更箇所: IDの隣に人数を表示 */}
+                                                          <span>ID: {res.userId}</span>
+                                                          <span className="text-white text-sm font-normal">({res.count || 1}名)</span>
+                                                        </div>
                                                         <div className="text-xs text-gray-300">{res.status === 'used' ? '✅ 入場済' : '🔵 予約中'}</div>
                                                     </div>
                                                     <div className="flex gap-1">
