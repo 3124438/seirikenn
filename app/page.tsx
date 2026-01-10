@@ -373,7 +373,7 @@ export default function Home() {
                         : "bg-blue-600 text-white hover:bg-blue-500"
                       }`}
                   >
-                    {t.isQueue && !isReady ? "待機中..." : "入場する (スタッフ用)"}
+                    {t.isQueue && !isReady ? "待機中..." : "入場する"}
                   </button>
                   <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
                     キャンセル
