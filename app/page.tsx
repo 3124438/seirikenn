@@ -1,3 +1,4 @@
+
 // ＃予約画面 (app/page.tsx)
 "use client";
 import { useState, useEffect } from "react";
@@ -417,7 +418,7 @@ export default function Home() {
                               >
                                 <span>🏃</span> 順番待ちに並ぶ
                               </button>
-                              <p className="text-xs text-gray-400 mt-3">※半径200m以内からのみ並べます(想定)</p>
+                              <p className="text-xs text-gray-400 mt-3">※入場可能になってから時間がたちすぎるとチケットがキャンセルされる可能性があります。</p>
                            </div>
                         ) : (
                            <div className="grid grid-cols-3 gap-3">
@@ -482,3 +483,4 @@ export default function Home() {
     </div>
   );
 }
+
