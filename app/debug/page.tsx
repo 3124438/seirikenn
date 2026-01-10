@@ -1,4 +1,4 @@
-// ＃予約画面 (app/debug/page.tsx)
+// ＃生徒用管理画面 (app/debug/page.tsx)
 "use client";
 import { useState, useEffect } from "react";
 // 階層に合わせてパスを調整
