@@ -474,7 +474,7 @@ export default function Home() {
                                        className={`p-2 rounded border h-24 flex flex-col items-center justify-center ${isBooked ? "bg-green-50 border-green-500" : "bg-white border-blue-200"}`}
                                      >
                                         <span className="font-bold">{time}</span>
-                                        <span className="text-xs">{isBooked ? "予約済" : isFull ? "満席" : `あと${remaining}名`}</span>
+                                        <span className="text-xs">{isBooked ? "予約済" : isFull ? "満席" : `あと${remaining}組`}</span>
                                      </button>
                                  );
                               })}
