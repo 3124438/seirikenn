@@ -2,7 +2,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { db, auth } from "../firebase";
-// ★修正1: Timestamp をインポートに追加
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
@@ -180,21 +179,17 @@ export default function Home() {
         });
       } else {
         // ★順番待ちの保存 (Queue)
-        const randomNum = Math.floor(Math.random() * 900) + 100;
-        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)];
-        const displayId = `${alphabet}-${randomNum}`;
-
+        // ランダムID生成を廃止し、userIdを使用する
         const currentQueue = selectedShop.queue || [];
         const maxTicketNum = currentQueue.reduce((max: number, q: any) => Math.max(max, q.ticketNumber || 0), 0);
         const nextTicketNum = maxTicketNum + 1;
 
         const queueData = {
           userId,
-          displayId,
+          displayId: userId, // 表示用IDとしてuserIdをそのまま保存
           ticketNumber: nextTicketNum,
           count: peopleCount,
           status: "waiting",
-          // ★修正2: serverTimestamp() ではなく Timestamp.now() を使用
           createdAt: Timestamp.now()
         };
 
@@ -208,7 +203,7 @@ export default function Home() {
       alert(draftBooking.mode === "queue" ? "整理券を発券しました！" : "予約しました！");
 
     } catch (e) { 
-      console.error(e); // コンソールにエラー詳細が出ます
+      console.error(e);
       alert("エラーが発生しました。"); 
     }
   };
@@ -222,6 +217,7 @@ export default function Home() {
       const shopData = shopSnap.data();
 
       if (ticket.isQueue) {
+         // displayId = userId なので、これで対象を特定できます
          const targetQ = shopData.queue?.find((q: any) => q.displayId === ticket.displayId);
          if (targetQ) {
            await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
@@ -308,7 +304,8 @@ export default function Home() {
                       
                       {t.isQueue ? (
                         <div className="mt-1">
-                          <p className="text-sm font-bold text-gray-500">整理券番号 (ID)</p>
+                          <p className="text-sm font-bold text-gray-500">整理券番号 (User ID)</p>
+                          {/* displayIdにはuserIdが入っています */}
                           <p className="text-3xl font-mono font-black text-gray-800 tracking-wider">{t.displayId}</p>
                           
                           {isReady ? (
