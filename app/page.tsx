@@ -5,8 +5,8 @@ import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-// シンプルな通知音（ピコーン）のBase64データ
-const BEEP_SOUND = "data:audio/mp3;base64,//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+// シンプルな電子音(ピピッ)のBase64データ
+const BEEP_SOUND = "data:audio/wav;base64,UklGRl9vT1BXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU";
 
 // 型定義
 type Ticket = {
@@ -50,7 +50,10 @@ export default function Home() {
   // 1. 初期化とデータ監視
   useEffect(() => {
     // Audioオブジェクトの初期化
-    audioRef.current = new Audio(BEEP_SOUND);
+    if (typeof window !== "undefined") {
+        audioRef.current = new Audio(BEEP_SOUND);
+        audioRef.current.volume = 1.0; // 音量最大
+    }
 
     signInAnonymously(auth).catch((e) => console.error(e));
     
@@ -146,8 +149,7 @@ export default function Home() {
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
-  // ★追加: 通知ループ処理
-  // 3秒ごとにチェックし、statusがready かつ 設定がONなら 音/振動 を実行
+  // ★修正: 通知ループ処理 (1秒間隔に変更)
   useEffect(() => {
     const intervalId = setInterval(() => {
       let playSound = false;
@@ -161,23 +163,38 @@ export default function Home() {
         }
       });
 
+      // 音を鳴らす
       if (playSound && audioRef.current) {
+        // 再生位置をリセットして再生（連打可能にする）
         audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(e => console.log("Sound blocked:", e));
+        audioRef.current.play().catch(e => {
+            console.log("Sound play error (user interaction required):", e);
+        });
       }
       
-      // バイブレーション (200ms振動, 100ms停止, 200ms振動)
+      // バイブレーション (200ms振動)
       if (doVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
-        navigator.vibrate([200, 100, 200]);
+        try {
+            navigator.vibrate(200);
+        } catch(e) { /* ignore */ }
       }
 
-    }, 3000); // 3秒間隔
+    }, 1000); // ★1秒間隔に変更
 
     return () => clearInterval(intervalId);
   }, [activeTickets, notifySettings]);
 
-  // ★追加: 通知設定を切り替える関数
+  // ★通知設定を切り替える関数（ここ重要）
   const toggleSetting = (uniqueKey: string, type: 'sound' | 'vibrate') => {
+    // ユーザーがボタンを押したタイミングで、一度音声をロード/再生してブラウザ制限を解除する
+    if (type === 'sound' && audioRef.current) {
+        // 一瞬だけ再生して止めるハック
+        audioRef.current.play().then(() => {
+            audioRef.current?.pause();
+            audioRef.current!.currentTime = 0;
+        }).catch((e) => console.log("Init play failed:", e));
+    }
+
     setNotifySettings(prev => {
       const current = prev[uniqueKey] || { sound: false, vibrate: false };
       return {
@@ -188,11 +205,6 @@ export default function Home() {
         }
       };
     });
-    
-    // iOSなどで音声を有効化するためのハック（無音を再生）
-    if (type === 'sound' && audioRef.current) {
-       audioRef.current.play().then(() => audioRef.current?.pause()).catch(() => {});
-    }
   };
 
 
@@ -408,7 +420,7 @@ export default function Home() {
                           </div>
                       )}
 
-                      {/* ★追加: 音と振動のON/OFFスイッチ */}
+                      {/* 音と振動のON/OFFスイッチ */}
                       {t.isQueue && (
                         <div className="flex gap-3 mt-3">
                           <button 
