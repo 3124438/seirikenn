@@ -34,13 +34,12 @@ export default function Home() {
   const [draftBooking, setDraftBooking] = useState<{ time: string; remaining: number; mode: "slot" | "queue"; maxPeople: number } | null>(null);
   const [peopleCount, setPeopleCount] = useState<number>(1);
 
-  // ★音を鳴らす関数 (ブラウザ標準のビープ音作成)
+  // ★音を鳴らす関数
   const playBeep = () => {
     try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioContextClass) return;
         
-        // コンテキストがない、または閉じている場合は再作成/再開
         if (!audioCtxRef.current) {
             audioCtxRef.current = new AudioContextClass();
         }
@@ -52,9 +51,9 @@ export default function Home() {
         const oscillator = ctx.createOscillator();
         const gainNode = ctx.createGain();
 
-        oscillator.type = 'sine'; // 音の種類（サイン波）
-        oscillator.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz (ラ)
-        oscillator.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5); // 音程を下げる
+        oscillator.type = 'sine'; 
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime); 
+        oscillator.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5); 
 
         gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
         gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
@@ -177,19 +176,14 @@ export default function Home() {
   // ★通知ループ処理 (1秒間隔でチェック)
   useEffect(() => {
     const intervalId = setInterval(() => {
-      // 呼び出し中(ready)のチケットがあるかチェック
       const hasReadyTicket = activeTickets.some(t => t.status === 'ready');
-
       if (hasReadyTicket) {
-        // 音を鳴らす
         playBeep();
-        
-        // バイブレーション
         if (typeof navigator !== "undefined" && navigator.vibrate) {
             try { navigator.vibrate(200); } catch(e) { /* ignore */ }
         }
       }
-    }, 1000); // 1秒間隔
+    }, 1000); 
 
     return () => clearInterval(intervalId);
   }, [activeTickets]);
@@ -250,13 +244,11 @@ export default function Home() {
       } else {
         const shopSnap = await getDoc(shopRef);
         const currentQueue = shopSnap.data()?.queue || [];
-        
         let maxId = 0;
         currentQueue.forEach((q: any) => {
             const num = parseInt(q.ticketId || "0");
             if (num > maxId) maxId = num;
         });
-
         const nextIdNum = maxId + 1;
         const nextTicketId = String(nextIdNum).padStart(6, '0');
 
@@ -274,10 +266,8 @@ export default function Home() {
 
         alert(`発券しました！\n番号: ${nextTicketId}`);
       }
-      
       setDraftBooking(null);
       setSelectedShop(null);
-
     } catch (e) { 
       console.error(e);
       alert("エラーが発生しました。もう一度お試しください。"); 
@@ -313,22 +303,15 @@ export default function Home() {
   const handleEnter = async (ticket: Ticket) => {
     const shop = attractions.find(s => s.id === ticket.shopId);
     if (!shop) return;
-
-    if (ticket.isQueue && ticket.status !== 'ready') {
-      return alert("まだ呼び出しされていません。");
-    }
-
+    if (ticket.isQueue && ticket.status !== 'ready') return alert("まだ呼び出しされていません。");
     const inputPass = prompt(`${shop.name}のスタッフパスワードを入力：`);
     if (inputPass !== shop.password) return alert("パスワードが違います！");
 
     try {
       const shopRef = doc(db, "attractions", shop.id);
-
       if (ticket.isQueue) {
         const targetQ = shop.queue.find((q: any) => q.ticketId === ticket.ticketId);
-        if(targetQ) {
-          await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
-        }
+        if(targetQ) await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
       } else {
         const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
         if(oldRes) {
@@ -339,7 +322,6 @@ export default function Home() {
       alert("入場処理が完了しました！");
     } catch(e) {
       alert("エラーが発生しました。");
-      console.error(e);
     }
   };
 
@@ -352,7 +334,6 @@ export default function Home() {
            </div>
            
            <div className="flex items-center gap-2">
-               {/* ★必須: 音量テストボタン (これだけは残さないと音が鳴りません) */}
                <button 
                   onClick={handleTestSound} 
                   className="bg-gray-200 text-gray-600 text-[10px] px-2 py-1 rounded border border-gray-300 active:bg-gray-300"
@@ -492,7 +473,8 @@ export default function Home() {
                  ← 戻る
                </button>
 
-               <div className="p-5 border-b bg-gray-50">
+               {/* ★修正: 画像がない場合(pt-14を追加)は文字がボタンと重ならないように下に下げる */}
+               <div className={`p-5 border-b bg-gray-50 ${!selectedShop.imageUrl ? "pt-14" : ""}`}>
                    {selectedShop.department && (
                      <p className="text-sm font-bold text-blue-600 mb-1">{selectedShop.department}</p>
                    )}
