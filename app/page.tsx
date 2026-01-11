@@ -1,16 +1,19 @@
 // app/page.tsx
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
+
+// シンプルな通知音（ピコーン）のBase64データ
+const BEEP_SOUND = "data:audio/mp3;base64,//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//uQxAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
 
 // 型定義
 type Ticket = {
   uniqueKey: string;
   shopId: string;
   shopName: string;
-  shopDepartment?: string; // 団体名
+  shopDepartment?: string;
   time: string;
   timestamp: number;
   status: "reserved" | "waiting" | "ready" | "used" | "done";
@@ -20,6 +23,14 @@ type Ticket = {
   peopleAhead?: number;
 };
 
+// 通知設定の型
+type NotificationSettings = {
+  [key: string]: {
+    sound: boolean;
+    vibrate: boolean;
+  }
+};
+
 export default function Home() {
   const [attractions, setAttractions] = useState<any[]>([]);
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
@@ -27,12 +38,20 @@ export default function Home() {
   const [userId, setUserId] = useState("");
   const [isBanned, setIsBanned] = useState(false);
 
-  // 申し込み画面用の状態
+  // 通知設定（デフォルトはすべてOFF）
+  const [notifySettings, setNotifySettings] = useState<NotificationSettings>({});
+  
+  // オーディオオブジェクトの参照を保持
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const [draftBooking, setDraftBooking] = useState<{ time: string; remaining: number; mode: "slot" | "queue"; maxPeople: number } | null>(null);
   const [peopleCount, setPeopleCount] = useState<number>(1);
 
   // 1. 初期化とデータ監視
   useEffect(() => {
+    // Audioオブジェクトの初期化
+    audioRef.current = new Audio(BEEP_SOUND);
+
     signInAnonymously(auth).catch((e) => console.error(e));
     
     let storedId = localStorage.getItem("bunkasai_user_id");
@@ -126,6 +145,56 @@ export default function Home() {
   }, []);
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
+
+  // ★追加: 通知ループ処理
+  // 3秒ごとにチェックし、statusがready かつ 設定がONなら 音/振動 を実行
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      let playSound = false;
+      let doVibrate = false;
+
+      activeTickets.forEach(t => {
+        if (t.status === 'ready') {
+          const setting = notifySettings[t.uniqueKey];
+          if (setting?.sound) playSound = true;
+          if (setting?.vibrate) doVibrate = true;
+        }
+      });
+
+      if (playSound && audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(e => console.log("Sound blocked:", e));
+      }
+      
+      // バイブレーション (200ms振動, 100ms停止, 200ms振動)
+      if (doVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate([200, 100, 200]);
+      }
+
+    }, 3000); // 3秒間隔
+
+    return () => clearInterval(intervalId);
+  }, [activeTickets, notifySettings]);
+
+  // ★追加: 通知設定を切り替える関数
+  const toggleSetting = (uniqueKey: string, type: 'sound' | 'vibrate') => {
+    setNotifySettings(prev => {
+      const current = prev[uniqueKey] || { sound: false, vibrate: false };
+      return {
+        ...prev,
+        [uniqueKey]: {
+          ...current,
+          [type]: !current[type]
+        }
+      };
+    });
+    
+    // iOSなどで音声を有効化するためのハック（無音を再生）
+    if (type === 'sound' && audioRef.current) {
+       audioRef.current.play().then(() => audioRef.current?.pause()).catch(() => {});
+    }
+  };
+
 
   if (isBanned) {
       return (
@@ -299,6 +368,9 @@ export default function Home() {
               ? "bg-red-50 border-l-4 border-red-500 shadow-xl ring-2 ring-red-400 animate-pulse-slow" 
               : "bg-white border-l-4 border-green-500 shadow-lg";
 
+            // 現在のチケットの設定を取得
+            const settings = notifySettings[t.uniqueKey] || { sound: false, vibrate: false };
+
             return (
               <div key={t.uniqueKey} className={`${cardClass} p-4 rounded relative`}>
                 <div className="flex justify-between items-start mb-3">
@@ -334,6 +406,33 @@ export default function Home() {
                                 </p>
                               )}
                           </div>
+                      )}
+
+                      {/* ★追加: 音と振動のON/OFFスイッチ */}
+                      {t.isQueue && (
+                        <div className="flex gap-3 mt-3">
+                          <button 
+                            onClick={() => toggleSetting(t.uniqueKey, 'sound')}
+                            className={`flex items-center gap-1 text-xs px-2 py-1.5 rounded-full border transition
+                              ${settings.sound 
+                                ? "bg-blue-600 text-white border-blue-600" 
+                                : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"}`}
+                          >
+                            <span>{settings.sound ? "🔊" : "🔇"}</span>
+                            <span>音: {settings.sound ? "ON" : "OFF"}</span>
+                          </button>
+
+                          <button 
+                            onClick={() => toggleSetting(t.uniqueKey, 'vibrate')}
+                            className={`flex items-center gap-1 text-xs px-2 py-1.5 rounded-full border transition
+                              ${settings.vibrate 
+                                ? "bg-orange-500 text-white border-orange-500" 
+                                : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"}`}
+                          >
+                            <span>{settings.vibrate ? "📳" : "🔕"}</span>
+                            <span>振動: {settings.vibrate ? "ON" : "OFF"}</span>
+                          </button>
+                        </div>
                       )}
                   </div>
                 </div>
@@ -394,7 +493,7 @@ export default function Home() {
         // 詳細・予約画面
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden pb-10">
             <div className="relative">
-               {/* ★追加: 詳細ヘッダー画像 */}
+               {/* 詳細ヘッダー画像 */}
                {selectedShop.imageUrl && (
                  <div className="w-full h-56 bg-gray-200">
                    <img 
