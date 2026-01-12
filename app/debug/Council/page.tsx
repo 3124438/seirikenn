@@ -1,4 +1,3 @@
-
 // ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
 import { useState, useEffect, useMemo } from "react";
