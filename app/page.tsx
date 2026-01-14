@@ -210,14 +210,14 @@ export default function Home() {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
     
-    const limitGroups = shop.groupLimit || 0; 
+    const limitGroups = shop.capacity || 0; 
     const current = shop.slots[time] || 0;
     const remaining = limitGroups - current;
 
     if (remaining <= 0) return alert("満席です。");
     if (shop.isPaused) return alert("停止中です。");
     
-    const maxPeople = shop.capacity || 10;
+    const maxPeople = shop.groupLimit || 10;
 
     setPeopleCount(1);
     setDraftBooking({ time, remaining, mode: "slot", maxPeople });
@@ -228,7 +228,7 @@ export default function Home() {
     if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
     if (shop.isPaused) return alert("停止中です。");
 
-    const maxPeople = shop.capacity || 10;
+    const maxPeople = shop.groupLimit || 10;
 
     setPeopleCount(1);
     setDraftBooking({ time: "順番待ち", remaining: 999, mode: "queue", maxPeople });
@@ -544,7 +544,7 @@ export default function Home() {
                         ) : (
                            <div className="grid grid-cols-3 gap-3">
                               {Object.entries(selectedShop.slots || {}).sort().map(([time, count]: any) => {
-                                 const limitGroups = selectedShop.groupLimit || 0; 
+                                 const limitGroups = selectedShop.capacity || 0; 
                                  const isFull = count >= limitGroups;
                                  const remaining = limitGroups - count;
                                  const isBooked = activeTickets.some(t => t.shopId === selectedShop.id && t.time === time);
@@ -607,5 +607,3 @@ export default function Home() {
     </div>
   );
 }
-
-
