@@ -404,7 +404,7 @@ export default function AdminPage() {
       {/* ================= ヘッダー (タブ切り替え) ================= */}
       <header className="flex justify-between items-center bg-gray-900 border-b border-green-900 px-4 py-2 shrink-0">
           <div className="flex items-center gap-4">
-              <h1 className="text-xl font-bold text-white tracking-widest">管理<span className="text-green-500">こんどーる</span></h1>
+              <h1 className="text-xl font-bold text-white tracking-widest">管理<span className="text-green-500">コンソール</span></h1>
               <div className="flex bg-black rounded border border-gray-700 p-1">
                   <button 
                     onClick={() => setActiveTab("venues")}
