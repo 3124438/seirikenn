@@ -1,6 +1,7 @@
 // ＃ユーザー管理画面 (app/admin/super/Hack/page.tsx)
 "use client";
 import { useState, useEffect, useMemo } from "react";
+// ↓ 環境に合わせてパスを調整してください (例: "@/firebase" or "../../../../firebase")
 import { db, auth } from "../../../../firebase"; 
 import { collection, onSnapshot, doc, updateDoc, setDoc, deleteDoc, getDoc, arrayUnion, arrayRemove, serverTimestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
@@ -148,7 +149,7 @@ export default function AdminPage() {
     const confirmMsg = user.isBanned 
       ? `ID「${user.id}」の凍結(BAN)を解除しますか？` 
       : `ID「${user.id}」を凍結(操作禁止)にしますか？`;
-     
+      
     if (!confirm(confirmMsg)) return;
     await updateDoc(doc(db, "users", user.id), { isBanned: !user.isBanned });
   };
@@ -157,21 +158,32 @@ export default function AdminPage() {
     if (!confirm(`【危険】ユーザーID: ${targetUid} の全予約データを強制削除します。\n枠を空けますか？`)) return;
     let deletedCount = 0;
     for (const shop of attractions) {
-        if (!shop.reservations) continue;
-        const targetRes = shop.reservations.filter((r: any) => r.userId === targetUid);
-        if (targetRes.length > 0) {
-            const newRes = shop.reservations.filter((r: any) => r.userId !== targetUid);
-            let newSlots = { ...shop.slots };
-            targetRes.forEach((r: any) => {
-                if (newSlots[r.time] > 0) newSlots[r.time]--;
-            });
-            await updateDoc(doc(db, "attractions", shop.id), {
-                reservations: newRes, slots: newSlots
-            });
-            deletedCount += targetRes.length;
+        // 予約の削除
+        if (shop.reservations) {
+            const targetRes = shop.reservations.filter((r: any) => r.userId === targetUid);
+            if (targetRes.length > 0) {
+                const newRes = shop.reservations.filter((r: any) => r.userId !== targetUid);
+                let newSlots = { ...shop.slots };
+                targetRes.forEach((r: any) => {
+                    if (newSlots[r.time] > 0) newSlots[r.time]--;
+                });
+                await updateDoc(doc(db, "attractions", shop.id), {
+                    reservations: newRes, slots: newSlots
+                });
+                deletedCount += targetRes.length;
+            }
+        }
+        // 行列(Queue)の削除も行う
+        if (shop.queue) {
+            const targetQueue = shop.queue.filter((q: any) => q.userId === targetUid);
+            if (targetQueue.length > 0) {
+                const newQueue = shop.queue.filter((q: any) => q.userId !== targetUid);
+                await updateDoc(doc(db, "attractions", shop.id), { queue: newQueue });
+                deletedCount += targetQueue.length;
+            }
         }
     }
-    alert(`完了: ${deletedCount} 件の予約データを削除しました。`);
+    alert(`完了: ${deletedCount} 件のデータ(予約・行列)を削除しました。`);
   };
 
   const deleteUserFromDb = async (targetUid: string) => {
@@ -199,6 +211,7 @@ export default function AdminPage() {
       const ids = new Set<string>();
       attractions.forEach(shop => {
           shop.reservations?.forEach((res: any) => { if (res.userId) ids.add(res.userId); });
+          shop.queue?.forEach((q: any) => { if (q.userId) ids.add(q.userId); }); // Queueも検索対象に
           shop.allowedUsers?.forEach((id: string) => ids.add(id));
           shop.bannedUsers?.forEach((id: string) => ids.add(id));
           shop.adminAllowedUsers?.forEach((id: string) => ids.add(id));
@@ -278,12 +291,24 @@ export default function AdminPage() {
       if(action === "add") setConfigInputUserId(""); 
   };
 
+  // ★変更: 予約だけでなく行列(Queue)も含めて取得する
   const fetchStudentData = () => {
     if(!targetStudentId) return alert("ユーザーを選択してください");
     const foundReservations: any[] = [];
     attractions.forEach(shop => {
+        // 予約の検索
         shop.reservations?.forEach((res: any) => {
-            if(res.userId === targetStudentId) foundReservations.push({ shopId: shop.id, shopName: shop.name, ...res });
+            if(res.userId === targetStudentId) foundReservations.push({ shopId: shop.id, shopName: shop.name, ...res, isQueue: false });
+        });
+        // 行列の検索 (Queue)
+        shop.queue?.forEach((q: any) => {
+            if(q.userId === targetStudentId) foundReservations.push({ 
+                shopId: shop.id, 
+                shopName: shop.name, 
+                time: "順番待ち", // 行列の場合は時刻なし
+                ...q, 
+                isQueue: true // 判別フラグ
+            });
         });
     });
     setStudentReservations(foundReservations);
@@ -293,21 +318,33 @@ export default function AdminPage() {
   const forceToggleStatus = async (res: any, status: "used" | "reserved") => {
       const shop = attractions.find(s => s.id === res.shopId);
       if(!shop) return;
+      // 行列の場合はステータス変更できない（もしくは別のロジックが必要だが、一旦予約のみ対象とする）
+      if(res.isQueue) return alert("順番待ちの状態はここから変更できません。");
+
       const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
       const updatedRes = { ...res, status };
-      delete updatedRes.shopId; delete updatedRes.shopName;
+      delete updatedRes.shopId; delete updatedRes.shopName; delete updatedRes.isQueue;
       await updateDoc(doc(db, "attractions", res.shopId), { reservations: [...otherRes, updatedRes] });
       fetchStudentData(); 
   };
 
+  // ★変更: 予約か行列かを判定して削除
   const forceDeleteReservation = async (res: any) => {
       if(!confirm(`削除しますか？`)) return;
       const shop = attractions.find(s => s.id === res.shopId);
       if(!shop) return;
-      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-      // スロットの解放（※ここでは1予約につき1スロット戻すと仮定）
-      const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 1) - 1) };
-      await updateDoc(doc(db, "attractions", res.shopId), { reservations: otherRes, slots: updatedSlots });
+
+      if (res.isQueue) {
+          // 行列からの削除
+          const otherQueue = shop.queue.filter((q: any) => q.timestamp !== res.timestamp);
+          await updateDoc(doc(db, "attractions", res.shopId), { queue: otherQueue });
+      } else {
+          // 予約からの削除
+          const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
+          // スロットの解放
+          const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 1) - 1) };
+          await updateDoc(doc(db, "attractions", res.shopId), { reservations: otherRes, slots: updatedSlots });
+      }
       setIsModalOpen(false); fetchStudentData();
   };
 
@@ -316,13 +353,12 @@ export default function AdminPage() {
       const shop = attractions.find(s => s.id === addShopId);
       if(!shop) return;
       
-      // ★変更点: 人数(count)をデータに含める
       const newRes = { 
           userId: targetStudentId, 
           timestamp: Date.now(), 
           time: addTime, 
           status: "reserved",
-          count: Number(addCount) // 人数を追加
+          count: Number(addCount)
       };
 
       const updatedSlots = { ...shop.slots, [addTime]: (shop.slots?.[addTime] || 0) + 1 };
@@ -330,6 +366,28 @@ export default function AdminPage() {
           reservations: [...(shop.reservations || []), newRes], slots: updatedSlots
       });
       alert(`強制予約完了`);
+      fetchStudentData();
+  };
+
+  // ★新機能: 強制的に行列に追加する関数
+  const forceAddToQueue = async () => {
+      if (!addShopId) return alert("会場を選択してください");
+      // 時間は不要なのでチェックしない
+      const shop = attractions.find(s => s.id === addShopId);
+      if (!shop) return;
+
+      const newQueueItem = {
+          userId: targetStudentId,
+          timestamp: Date.now(),
+          count: Number(addCount),
+          status: "waiting"
+      };
+
+      await updateDoc(doc(db, "attractions", addShopId), {
+          queue: arrayUnion(newQueueItem)
+      });
+
+      alert("行列(順番待ち)に強制追加しました");
       fetchStudentData();
   };
 
@@ -582,7 +640,6 @@ export default function AdminPage() {
           </div>
       )}
 
-
       {/* ================= モーダル (予約詳細・修正済) ================= */}
       {isModalOpen && (
           <div className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -597,28 +654,31 @@ export default function AdminPage() {
                   
                   {/* 予約リスト表示 */}
                   <div className="mb-8">
-                      <h3 className="font-bold text-gray-400 mb-2 border-b border-gray-700 pb-1">現在の予約 ({studentReservations.length}件)</h3>
+                      <h3 className="font-bold text-gray-400 mb-2 border-b border-gray-700 pb-1">現在の予約・行列 ({studentReservations.length}件)</h3>
                       {studentReservations.length === 0 ? (
                           <p className="text-gray-600">予約はありません</p>
                       ) : (
                           <ul className="space-y-3">
                               {studentReservations.map((res, i) => (
-                                  <li key={i} className="bg-black border border-gray-700 p-3 rounded flex justify-between items-center">
+                                  <li key={i} className={`border p-3 rounded flex justify-between items-center ${res.isQueue ? 'bg-yellow-900/10 border-yellow-800' : 'bg-black border-gray-700'}`}>
                                       <div>
                                           <div className="text-yellow-500 text-sm">{res.shopName}</div>
-                                          <div className="text-white text-lg font-bold">
+                                          <div className="text-white text-lg font-bold flex items-center gap-2">
                                               {res.time} 
                                               {/* ★変更点: 時間の右隣に人数を表示 */}
-                                              <span className="ml-2 text-sm text-blue-300">({res.count || 1}名)</span>
+                                              <span className="text-sm text-blue-300">({res.count || 1}名)</span>
+                                              {res.isQueue && <span className="text-xs bg-yellow-600 text-black px-1 rounded font-bold">行列</span>}
                                           </div>
                                           <div className={`text-xs ${res.status === 'used' ? 'text-gray-500' : 'text-green-400'}`}>
-                                              {res.status === 'used' ? "使用済み" : "予約中"}
+                                              {res.status === 'used' ? "使用済み" : (res.isQueue ? "順番待ち" : "予約中")}
                                           </div>
                                       </div>
                                       <div className="flex flex-col gap-1">
-                                          <button onClick={() => forceToggleStatus(res, res.status === 'used' ? 'reserved' : 'used')} className="text-xs bg-gray-800 px-2 py-1 rounded text-white border border-gray-600">
-                                              {res.status === 'used' ? "未使用に戻す" : "使用済みにする"}
-                                          </button>
+                                          {!res.isQueue && (
+                                              <button onClick={() => forceToggleStatus(res, res.status === 'used' ? 'reserved' : 'used')} className="text-xs bg-gray-800 px-2 py-1 rounded text-white border border-gray-600">
+                                                  {res.status === 'used' ? "未使用に戻す" : "使用済みにする"}
+                                              </button>
+                                          )}
                                           <button onClick={() => forceDeleteReservation(res)} className="text-xs bg-red-900/50 text-red-300 px-2 py-1 rounded border border-red-800">
                                               削除
                                           </button>
@@ -656,8 +716,13 @@ export default function AdminPage() {
                             />
                           </div>
 
-                          <button onClick={forceAddReservation} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2 rounded h-[42px]">
-                             強制追加
+                          <button onClick={forceAddReservation} className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded h-[42px] whitespace-nowrap">
+                             強制予約(時間)
+                          </button>
+                          
+                          {/* ★新機能: 行列追加ボタン */}
+                          <button onClick={forceAddToQueue} className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold px-4 py-2 rounded h-[42px] whitespace-nowrap">
+                             行列に追加
                           </button>
                       </div>
                   </div>
