@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { db, auth } from "../../../../firebase"; 
-import { db, auth } from "../firebase"; 
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
