@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
+// ↓ エラーログに基づき、4階層上の firebase を読み込むパスに設定しています
 import { db, auth } from "../../../../firebase"; 
-import { db, auth } from "../firebase"; 
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
@@ -43,10 +43,11 @@ export default function AdminPage() {
   // 表示・編集モード管理
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
   
-  // --- 強制追加用ステート ---
+  // --- ★追加: 強制追加用ステート ---
   const [forceUserId, setForceUserId] = useState("");
   const [forceCount, setForceCount] = useState(1);
   const [forceTime, setForceTime] = useState("");
+  // モード切替: 'slot'(時間予約) か 'queue'(順番待ち)
   const [forceMode, setForceMode] = useState<"slot" | "queue">("slot");
 
   // --- 初期化 ---
@@ -100,17 +101,21 @@ export default function AdminPage() {
         const shopRef = doc(db, "attractions", shop.id);
 
         if (forceMode === "queue") {
-            // --- 順番待ちへの追加 ---
+            // --- ★順番待ちへの追加ロジック ---
+            
+            // 注意喚起: 時間予約制の店に順番待ちを追加しようとした場合
             if (!shop.isQueueMode) {
                 if(!confirm("この会場は「順番待ち制」ではありませんが、無理やりキューに追加しますか？")) return;
             }
 
             const currentQueue = shop.queue || [];
             let maxId = 0;
+            // 現在の最大チケット番号を探す
             currentQueue.forEach((q: any) => {
                 const num = parseInt(q.ticketId || "0");
                 if (num > maxId) maxId = num;
             });
+            // 次の番号を生成 (6桁埋め)
             const nextTicketId = String(maxId + 1).padStart(6, '0');
 
             const queueData = {
@@ -127,7 +132,7 @@ export default function AdminPage() {
             alert(`順番待ちに追加しました (No.${nextTicketId})`);
 
         } else {
-            // --- 時間枠への追加 ---
+            // --- 時間枠への追加ロジック ---
             if (!forceTime) return alert("時間枠を選択してください");
             
             const reservationData = {
@@ -147,7 +152,7 @@ export default function AdminPage() {
             alert(`${forceTime} に予約を追加しました`);
         }
 
-        // リセット
+        // 入力欄リセット
         setForceUserId("");
         setForceCount(1);
     } catch (e) {
@@ -303,7 +308,8 @@ export default function AdminPage() {
                             ⚡ 強制追加 (Force Add)
                         </h3>
                         <div className="flex flex-wrap items-end gap-3 bg-gray-800 p-3 rounded-lg border border-gray-700">
-                            {/* モード切替 */}
+                            
+                            {/* ★モード切替スイッチ */}
                             <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
                                 <button 
                                     onClick={() => setForceMode("slot")}
@@ -489,4 +495,3 @@ export default function AdminPage() {
     </div>
   );
 }
-
