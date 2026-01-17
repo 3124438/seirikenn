@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from "react";
 import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
+// ★QRリーダーのインポート
+import { QrReader } from 'react-qr-reader';
 
 // 型定義
 type Ticket = {
@@ -30,6 +32,10 @@ export default function Home() {
   // ★通知設定（デフォルトOFF）
   const [enableSound, setEnableSound] = useState(false);
   const [enableVibrate, setEnableVibrate] = useState(false);
+
+  // ★QRコード関連のステート
+  // qrTicket がセットされているときだけカメラモーダルを開く
+  const [qrTicket, setQrTicket] = useState<Ticket | null>(null);
 
   // 音声再生用の参照 (Web Audio API)
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -177,16 +183,12 @@ export default function Home() {
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
-  // ★通知ループ処理 (設定フラグを見て再生するか決める)
+  // ★通知ループ処理
   useEffect(() => {
     const intervalId = setInterval(() => {
       const hasReadyTicket = activeTickets.some(t => t.status === 'ready');
       if (hasReadyTicket) {
-        // 音設定がONなら鳴らす
-        if (enableSound) {
-            playBeep();
-        }
-        // 振動設定がONなら振動させる
+        if (enableSound) playBeep();
         if (enableVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
             try { navigator.vibrate(200); } catch(e) { /* ignore */ }
         }
@@ -194,7 +196,7 @@ export default function Home() {
     }, 1000); 
 
     return () => clearInterval(intervalId);
-  }, [activeTickets, enableSound, enableVibrate]); // 依存配列に追加
+  }, [activeTickets, enableSound, enableVibrate]);
 
 
   if (isBanned) {
@@ -205,6 +207,8 @@ export default function Home() {
           </div>
       );
   }
+
+  // --- 予約・発券ロジック ---
 
   const handleSelectTime = (shop: any, time: string) => {
     if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
@@ -308,28 +312,57 @@ export default function Home() {
     } catch (e) { alert("キャンセル失敗"); }
   };
 
-  const handleEnter = async (ticket: Ticket) => {
+  // --- ★入場ロジック (共通処理) ---
+  const processEntry = async (ticket: Ticket, inputPass: string) => {
     const shop = attractions.find(s => s.id === ticket.shopId);
     if (!shop) return;
-    if (ticket.isQueue && ticket.status !== 'ready') return alert("まだ呼び出しされていません。");
-    const inputPass = prompt(`${shop.name}のスタッフパスワードを入力：`);
-    if (inputPass !== shop.password) return alert("パスワードが違います！");
+    
+    // パスワード照合
+    if (inputPass !== shop.password) {
+        alert("パスワードが違います（QRコードが異なる可能性があります）");
+        return;
+    }
 
     try {
       const shopRef = doc(db, "attractions", shop.id);
+      
       if (ticket.isQueue) {
+        // 整理券の場合の入場処理
         const targetQ = shop.queue.find((q: any) => q.ticketId === ticket.ticketId);
         if(targetQ) await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
       } else {
+        // 時間指定予約の場合の入場処理
         const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
         if(oldRes) {
             await updateDoc(shopRef, { reservations: arrayRemove(oldRes) });
             await updateDoc(shopRef, { reservations: arrayUnion({ ...oldRes, status: "used" }) });
         }
       }
-      alert("入場処理が完了しました！");
+      
+      alert(`「${shop.name}」に入場しました！`);
+      setQrTicket(null); // QRカメラを閉じる
     } catch(e) {
+      console.error(e);
       alert("エラーが発生しました。");
+    }
+  };
+
+  // ★手動入力での入場
+  const handleManualEnter = (ticket: Ticket) => {
+    const shop = attractions.find(s => s.id === ticket.shopId);
+    if (!shop) return;
+    if (ticket.isQueue && ticket.status !== 'ready') return alert("まだ呼び出しされていません。");
+
+    const inputPass = prompt(`${shop.name}のスタッフパスワードを入力：`);
+    if (inputPass === null) return; // キャンセル時
+    processEntry(ticket, inputPass);
+  };
+
+  // ★QRスキャン完了時の処理
+  const handleQrScan = (result: any) => {
+    if (result && qrTicket) {
+        const scannedPassword = result?.text || result;
+        processEntry(qrTicket, scannedPassword);
     }
   };
 
@@ -349,10 +382,10 @@ export default function Home() {
         </div>
         
         <div className="bg-gray-800 text-white text-center py-1 rounded text-xs font-mono mb-2">
-           User ID: {userId}
+            User ID: {userId}
         </div>
 
-        {/* ★通知設定パネル */}
+        {/* 通知設定パネル */}
         <div className="bg-white p-2 rounded-lg border shadow-sm flex items-center justify-between">
             <span className="text-xs font-bold text-gray-500 pl-2">呼び出し通知</span>
             <div className="flex gap-2">
@@ -427,22 +460,40 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    {/* 手動入力ボタン */}
+                    <button 
+                        onClick={() => handleManualEnter(t)} 
+                        disabled={t.isQueue && !isReady} 
+                        className={`flex-1 font-bold py-3 rounded-lg shadow transition text-sm
+                        ${(t.isQueue && !isReady) 
+                            ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
+                            : "bg-blue-600 text-white hover:bg-blue-500"
+                        }`}
+                    >
+                        {t.isQueue && !isReady ? "待機中..." : "パスワード入力で入場"}
+                    </button>
+                    {/* キャンセルボタン */}
+                    <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
+                        削除
+                    </button>
+                  </div>
+
+                  {/* ★QRコードで入場ボタン */}
                   <button 
-                    onClick={() => handleEnter(t)} 
-                    disabled={t.isQueue && !isReady} 
-                    className={`flex-1 font-bold py-3 rounded-lg shadow transition
-                      ${(t.isQueue && !isReady) 
-                        ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
-                        : "bg-blue-600 text-white hover:bg-blue-500"
-                      }`}
+                    onClick={() => setQrTicket(t)}
+                    disabled={t.isQueue && !isReady}
+                    className={`w-full font-bold py-3 rounded-lg border-2 flex items-center justify-center gap-2 transition
+                        ${(t.isQueue && !isReady)
+                            ? "border-gray-300 text-gray-400 cursor-not-allowed bg-gray-50"
+                            : "border-black text-black bg-white hover:bg-gray-100"
+                        }`}
                   >
-                    {t.isQueue && !isReady ? "待機中..." : "入場"}
-                  </button>
-                  <button onClick={() => handleCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
-                    キャンセル
+                     <span>📷</span> QRコードで入場
                   </button>
                 </div>
+
               </div>
             );
           })}
@@ -604,6 +655,42 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {/* ★QRコードリーダー モーダル */}
+      {qrTicket && (
+          <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
+              <div className="w-full max-w-sm">
+                  <h3 className="text-white font-bold text-center mb-4 text-lg">
+                      QRコードを読み取ってください
+                  </h3>
+                  
+                  <div className="relative rounded-xl overflow-hidden border-2 border-gray-700 bg-black">
+                       <QrReader
+                          onResult={handleQrScan}
+                          constraints={{ facingMode: 'environment' }}
+                          className="w-full"
+                          scanDelay={500}
+                       />
+                       {/* 枠の演出 */}
+                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                           <div className="w-64 h-64 border-4 border-green-500/50 rounded-lg"></div>
+                       </div>
+                  </div>
+
+                  <p className="text-gray-400 text-xs text-center mt-4">
+                      会場のQRコードを枠内に写してください
+                  </p>
+                  
+                  <button 
+                      onClick={() => setQrTicket(null)}
+                      className="w-full mt-6 py-4 bg-gray-800 text-white font-bold rounded-lg border border-gray-600"
+                  >
+                      キャンセル
+                  </button>
+              </div>
+          </div>
+      )}
+
     </div>
   );
 }
