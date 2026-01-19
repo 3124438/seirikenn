@@ -215,6 +215,16 @@ export default function AdminPage() {
       setMenuItems(newItems);
   };
 
+  // ★今回追加: メニューの項目（価格・在庫）を直接変更するハンドラ
+  const handleMenuChange = (index: number, field: string, value: string) => {
+      const newItems = [...menuItems];
+      newItems[index] = {
+          ...newItems[index],
+          [field]: Number(value) // 数値として保存
+      };
+      setMenuItems(newItems);
+  };
+
   const handleSave = async () => {
     if (!isEditing) return alert("新規会場の作成は無効化されています。");
     const currentShop = attractions.find(s => s.id === manualId);
@@ -492,6 +502,7 @@ export default function AdminPage() {
                         <div className="bg-gray-750 p-3 rounded border border-orange-600/30 mb-4 bg-orange-900/10">
                             <h4 className="text-xs font-bold text-orange-400 mb-2 uppercase tracking-wider">Menu Registration (オーダー制のみ)</h4>
                             
+                            {/* 新規追加フォーム */}
                             <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end mb-2">
                                 <div className="col-span-2 md:col-span-2">
                                     <label className="text-[10px] text-gray-400">品名</label>
@@ -521,17 +532,39 @@ export default function AdminPage() {
                             </div>
                             <button onClick={addMenuItem} className="w-full bg-gray-700 hover:bg-orange-600 text-xs py-2 rounded mb-3 transition">＋ メニューを追加</button>
 
-                            {/* 登録済みメニューリスト */}
+                            {/* 登録済みメニューリスト（ここを編集可能に変更） */}
                             <div className="space-y-1">
                                 {menuItems.map((item, idx) => (
                                     <div key={idx} className="flex justify-between items-center bg-gray-800 p-2 rounded border border-gray-700 text-sm">
-                                        <div className="flex gap-2">
-                                            <span className="font-bold">{item.name}</span>
-                                            <span className="text-gray-400">¥{item.price}</span>
-                                            <span className="text-gray-400">在庫:{item.stock}</span>
-                                            <span className="text-gray-400">限:{item.limit}</span>
+                                        <div className="flex gap-2 items-center flex-1 overflow-hidden">
+                                            {/* 名前 */}
+                                            <span className="font-bold min-w-[80px] truncate">{item.name}</span>
+                                            
+                                            {/* 価格編集 */}
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-gray-500 text-xs">¥</span>
+                                                <input 
+                                                    type="number"
+                                                    value={item.price}
+                                                    onChange={(e) => handleMenuChange(idx, "price", e.target.value)}
+                                                    className="w-16 bg-gray-900 border border-gray-600 rounded px-1 py-0.5 text-right text-xs outline-none focus:border-orange-500"
+                                                />
+                                            </div>
+
+                                            {/* 在庫編集 */}
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-gray-500 text-xs">在庫</span>
+                                                <input 
+                                                    type="number"
+                                                    value={item.stock}
+                                                    onChange={(e) => handleMenuChange(idx, "stock", e.target.value)}
+                                                    className="w-16 bg-gray-900 border border-gray-600 rounded px-1 py-0.5 text-right text-xs outline-none focus:border-orange-500"
+                                                />
+                                            </div>
+
+                                            <span className="text-gray-500 text-xs whitespace-nowrap">限:{item.limit}</span>
                                         </div>
-                                        <button onClick={() => removeMenuItem(idx)} className="text-red-400 text-xs hover:text-red-300">削除</button>
+                                        <button onClick={() => removeMenuItem(idx)} className="text-red-400 text-xs hover:text-red-300 ml-2">削除</button>
                                     </div>
                                 ))}
                                 {menuItems.length === 0 && <div className="text-center text-xs text-gray-500 py-2">メニューが登録されていません</div>}
@@ -608,7 +641,7 @@ export default function AdminPage() {
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
-                    // 検索ヒット判定：予約(reservations)または待機列(queue)またはオーダー(orders)
+                    // 検索ヒット判定
                     const hitInRes = shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                     const hitInQueue = shop.queue?.some((q:any) => q.userId?.includes(searchUserId.toUpperCase()) || q.ticketId?.includes(searchUserId.toUpperCase()));
                     const hitInOrder = shop.orders?.some((o:any) => o.userId?.includes(searchUserId.toUpperCase()) || o.id?.includes(searchUserId.toUpperCase()));
@@ -645,37 +678,17 @@ export default function AdminPage() {
                                             {shop.department}
                                         </span>
                                     )}
-
-                                    {/* 状態表示 */}
-                                    {blacklisted && <span className="text-xs bg-red-900 text-red-200 border border-red-700 px-2 py-0.5 rounded font-bold">⛔ BAN指定</span>}
-                                    {notWhitelisted && <span className="text-xs bg-gray-700 text-gray-300 border border-gray-500 px-2 py-0.5 rounded font-bold">🔒 許可外</span>}
-                                    {(!blacklisted && !notWhitelisted && adminRestricted) && <span className="text-xs bg-purple-900 text-purple-200 border border-purple-700 px-2 py-0.5 rounded font-bold">🛡️ スタッフ限</span>}
-                                    
-                                    {/* 運用モードバッジ */}
-                                    {shop.isOrderMode ? (
-                                        <span className="text-xs bg-orange-900/60 text-orange-300 border border-orange-700 px-2 py-0.5 rounded">🛒 オーダー制</span>
-                                    ) : shop.isQueueMode ? (
-                                        <span className="text-xs bg-green-900/60 text-green-300 border border-green-700 px-2 py-0.5 rounded">🔢 順番待ち</span>
-                                    ) : (
-                                        <span className="text-xs bg-blue-900/60 text-blue-300 border border-blue-700 px-2 py-0.5 rounded">🕒 時間予約</span>
-                                    )}
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-bold text-lg truncate w-full">{shop.name}</span>
-                                    {shop.isPaused && <span className="text-xs bg-red-600 px-2 py-0.5 rounded text-white whitespace-nowrap">停止中</span>}
+                                <h2 className="text-lg font-bold truncate mb-1 group-hover:text-blue-400 transition">{shop.name}</h2>
+                                
+                                {/* 簡易ステータス表示 */}
+                                <div className="flex flex-wrap gap-2 text-xs text-gray-400">
+                                    {shop.isPaused && <span className="text-red-400 font-bold">⛔ 受付停止中</span>}
+                                    {shop.isQueueMode && <span className="text-green-400">🔢 順番待ち制</span>}
+                                    {shop.isOrderMode && <span className="text-orange-400">🛒 オーダー制</span>}
+                                    {!shop.isQueueMode && !shop.isOrderMode && <span>🕒 予約制</span>}
+                                    {isLocked && <span className="text-gray-500">🔒 権限なし</span>}
                                 </div>
-                                <div className="text-xs text-gray-400 mt-1">
-                                    {shop.isOrderMode ? (
-                                        <span>注文: {shop.orders?.length || 0}件</span>
-                                    ) : shop.isQueueMode ? (
-                                        <span>待機: {shop.queue?.length || 0}組</span>
-                                    ) : (
-                                        <span>予約: {shop.reservations?.length || 0}件</span>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="self-center text-gray-400 text-2xl group-hover:text-white transition-transform group-hover:translate-x-1">
-                                ›
                             </div>
                         </button>
                     );
@@ -683,264 +696,131 @@ export default function AdminPage() {
             </div>
         )}
 
-        {/* 2. 詳細モード（会場が選択された時） */}
+        {/* 2. 詳細・管理モード (expandedShopIdがある場合) */}
         {expandedShopId && targetShop && (
-            <div className="animate-fade-in">
-                {/* 戻るヘッダー */}
-                <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">
-                    ← 会場一覧に戻る
+            <div className="animate-fade-in-up">
+                <button 
+                    onClick={() => setExpandedShopId(null)} 
+                    className="mb-4 text-sm text-gray-400 hover:text-white flex items-center gap-1"
+                >
+                    ← 一覧に戻る
                 </button>
-
-                <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
-                    
-                    {/* タイトルバー */}
-                    <div className="bg-gray-700 p-4 flex justify-between items-start relative overflow-hidden">
-                        {/* 背景画像(あれば薄く表示) */}
-                        {targetShop.imageUrl && (
-                            <div className="absolute inset-0 z-0 opacity-20">
-                                <img src={targetShop.imageUrl} className="w-full h-full object-cover" alt="" />
-                            </div>
-                        )}
-                        <div className="relative z-10">
-                            <div className="flex items-center gap-2 mb-1">
-                                <span className="text-yellow-400 font-mono font-bold text-xl">{targetShop.id}</span>
-                                {targetShop.department && (
-                                    <span className="text-xs bg-black/50 text-white px-2 py-0.5 rounded backdrop-blur-sm border border-white/20">
-                                        {targetShop.department}
-                                    </span>
-                                )}
-                                <span className={`text-xs px-2 py-0.5 rounded border backdrop-blur-sm 
-                                    ${targetShop.isOrderMode ? "bg-orange-600/50 border-orange-400 text-white" :
-                                      targetShop.isQueueMode ? "bg-green-600/50 border-green-400 text-white" : "bg-blue-600/50 border-blue-400 text-white"}`}>
-                                    {targetShop.isOrderMode ? "オーダー制" : targetShop.isQueueMode ? "順番待ち制" : "時間予約制"}
-                                </span>
-                            </div>
-                            <h2 className="text-2xl font-bold flex items-center gap-2 text-white drop-shadow-md">
-                                {targetShop.name}
-                            </h2>
-                            <p className="text-xs text-gray-300 mt-1 drop-shadow-md">Pass: **** | 定員: {targetShop.capacity}組</p>
+                
+                <div className="bg-gray-800 rounded-xl border border-gray-700 p-6 shadow-xl relative overflow-hidden">
+                    <div className="flex justify-between items-start mb-6 border-b border-gray-700 pb-4">
+                        <div>
+                             <div className="flex items-center gap-3 mb-1">
+                                <h2 className="text-2xl font-bold">{targetShop.name}</h2>
+                                <span className="bg-gray-700 text-gray-300 text-xs px-2 py-1 rounded font-mono">ID: {targetShop.id}</span>
+                             </div>
+                             <p className="text-sm text-gray-400">{targetShop.department}</p>
                         </div>
-                        <div className="flex gap-2 relative z-10">
-                            <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500 font-bold shadow-lg">⚙️ 設定編集</button>
-                            <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500 shadow-lg">削除</button>
+                        <div className="flex flex-col items-end gap-2">
+                            <button 
+                                onClick={() => startEdit(targetShop)}
+                                className="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded shadow transition"
+                            >
+                                ✏️ 設定編集
+                            </button>
+                            <button 
+                                onClick={() => handleDeleteVenue(targetShop.id)}
+                                className="text-red-400 text-xs hover:text-red-300 underline"
+                            >
+                                会場を削除
+                            </button>
                         </div>
                     </div>
 
-                    {/* ★★★ Dashboard Content ★★★ */}
-                    <div className="p-4 bg-gray-900/50 min-h-[400px]">
-                        
-                        {/* --- パターンA: オーダー制 (Order System) --- */}
-                        {targetShop.isOrderMode && (
-                            <div>
-                                {/* 在庫管理パネル */}
-                                <div className="mb-6 bg-gray-800 p-3 rounded border border-gray-700">
-                                    <h3 className="text-sm font-bold text-gray-400 mb-3 flex items-center gap-2">📦 在庫リアルタイム管理</h3>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                        {targetShop.menu?.map((item:any, idx:number) => (
-                                            <div key={idx} className="bg-gray-700 p-2 rounded flex justify-between items-center border border-gray-600">
-                                                <div>
-                                                    <div className="font-bold text-sm">{item.name}</div>
-                                                    <div className="text-xs text-gray-400">¥{item.price}</div>
-                                                </div>
-                                                <div className="flex items-center gap-2">
-                                                    <button onClick={() => updateStock(targetShop, idx, Math.max(0, item.stock - 1))} className="w-8 h-8 bg-gray-600 rounded hover:bg-gray-500 text-xl font-bold">-</button>
-                                                    <input 
-                                                        type="number" 
-                                                        className="w-12 bg-black text-center text-white p-1 rounded font-bold text-lg" 
-                                                        value={item.stock} 
-                                                        onChange={(e) => updateStock(targetShop, idx, Number(e.target.value))}
-                                                    />
-                                                    <button onClick={() => updateStock(targetShop, idx, item.stock + 1)} className="w-8 h-8 bg-blue-600 rounded hover:bg-blue-500 text-xl font-bold text-white">+</button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {(!targetShop.menu || targetShop.menu.length === 0) && (
-                                            <div className="text-gray-500 text-xs">メニューがありません。設定編集から登録してください。</div>
-                                        )}
-                                    </div>
-                                </div>
-
-                                {/* 注文リスト表示 */}
-                                <h3 className="text-sm font-bold text-gray-400 mb-2">📋 注文リスト</h3>
-                                <div className="space-y-2">
-                                    {/* 注文をソート：支払い画面を開いている/支払い待ちを先頭に */}
-                                    {targetShop.orders?.slice().sort((a:any, b:any) => {
-                                        // お支払い強調のための優先順位付け
-                                        const isHighPriority = (s:string) => s?.includes("支払い") || s?.includes("Payment");
-                                        const aPrio = isHighPriority(a.status) ? 1 : 0;
-                                        const bPrio = isHighPriority(b.status) ? 1 : 0;
-                                        return bPrio - aPrio; // 降順
-                                    }).map((order:any) => {
-                                        // お支払い強調スタイル
-                                        const isPaymentPending = order.status?.includes("支払い") || order.status?.includes("Payment");
-                                        const isCompleted = order.status === "completed";
-                                        
-                                        return (
-                                            <div key={order.id} className={`p-3 rounded border flex justify-between items-start 
-                                                ${isPaymentPending ? "bg-red-900/80 border-red-500 animate-pulse" : "bg-gray-800 border-gray-700"}
-                                                ${isCompleted ? "opacity-50" : ""}
-                                            `}>
-                                                <div className="flex-1">
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <span className="font-mono text-yellow-400 font-bold">{order.id.slice(-4)}</span>
-                                                        <span className={`text-xs px-2 py-0.5 rounded font-bold ${isPaymentPending ? "bg-red-100 text-red-600 text-lg scale-105" : "bg-gray-700 text-gray-300"}`}>
-                                                            {order.status}
-                                                        </span>
-                                                        <span className="text-xs text-gray-500">{new Date(order.timestamp).toLocaleTimeString()}</span>
-                                                    </div>
-                                                    {/* 注文詳細 */}
-                                                    <div className={`text-sm ${isPaymentPending ? "text-white font-bold text-lg" : "text-gray-300"}`}>
-                                                        {order.items?.map((i:any) => `${i.name}x${i.quantity}`).join(", ")}
-                                                    </div>
-                                                    <div className="text-xs text-gray-400 mt-1">合計: ¥{order.total}</div>
-                                                </div>
-                                                
-                                                {/* 操作ボタン */}
-                                                {!isCompleted && (
-                                                    <div className="flex flex-col gap-1">
-                                                        <button 
-                                                            onClick={async () => {
-                                                                if(!confirm("提供済みにしますか？")) return;
-                                                                const newOrders = targetShop.orders.map((o:any) => o.id === order.id ? {...o, status: "completed"} : o);
-                                                                await updateDoc(doc(db, "attractions", targetShop.id), { orders: newOrders });
-                                                            }}
-                                                            className="bg-green-600 text-white text-xs px-3 py-2 rounded hover:bg-green-500"
-                                                        >
-                                                            提供完了
-                                                        </button>
-                                                        <button 
-                                                            onClick={async () => {
-                                                                if(!confirm("注文を削除しますか？")) return;
-                                                                const newOrders = targetShop.orders.filter((o:any) => o.id !== order.id);
-                                                                await updateDoc(doc(db, "attractions", targetShop.id), { orders: newOrders });
-                                                            }}
-                                                            className="bg-gray-700 text-white text-xs px-3 py-1 rounded hover:bg-gray-600"
-                                                        >
-                                                            削除
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                    {(!targetShop.orders || targetShop.orders.length === 0) && (
-                                        <div className="text-center py-8 text-gray-500">注文はまだありません</div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* --- パターンB: 順番待ち制 (Queue System) --- */}
-                        {targetShop.isQueueMode && (
-                            <div>
-                                <div className="grid gap-3">
-                                    {(targetShop.queue || []).map((ticket: any) => {
-                                        const isCalled = ticket.status === "ready";
-                                        const isHighlight = searchUserId && (ticket.userId === searchUserId || ticket.ticketId === searchUserId);
-                                        
-                                        return (
-                                            <div key={ticket.ticketId} className={`p-3 rounded border flex justify-between items-center ${isCalled ? "bg-green-900/30 border-green-500" : "bg-gray-800 border-gray-700"} ${isHighlight ? "ring-2 ring-pink-500" : ""}`}>
-                                                <div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="text-2xl font-bold font-mono">{ticket.ticketId}</span>
-                                                        {isCalled && <span className="bg-green-500 text-black text-xs font-bold px-2 py-0.5 rounded animate-pulse">呼出中</span>}
-                                                    </div>
-                                                    <div className="text-xs text-gray-400">User: {ticket.userId}</div>
-                                                    <div className="text-xs text-gray-500">{new Date(ticket.timestamp).toLocaleTimeString()} 発券</div>
-                                                </div>
-                                                <div className="flex gap-1">
-                                                    {!isCalled && (
-                                                        <button onClick={() => handleQueueAction(targetShop, ticket, "call")} className="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-2 rounded text-xs font-bold">呼出</button>
-                                                    )}
-                                                    <button onClick={() => handleQueueAction(targetShop, ticket, "enter")} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded text-xs font-bold">入場</button>
-                                                    <button onClick={() => handleQueueAction(targetShop, ticket, "cancel")} className="bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-2 rounded text-xs">取消</button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                    {(!targetShop.queue || targetShop.queue.length === 0) && (
-                                        <div className="text-center py-8 text-gray-500">待ち列はありません</div>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* --- パターンC: 時間予約制 (Time Reservation) --- */}
-                        {!targetShop.isQueueMode && !targetShop.isOrderMode && (
-                            <div className="space-y-6">
-                                {/* 各時間枠のループ */}
-                                {Object.entries(getReservationsByTime(targetShop)).sort().map(([time, resList]: [string, any]) => {
-                                    const max = targetShop.slots ? targetShop.slots[time] : 0; // 現在の予約数（slotsの値は予約済み数）
-                                    // 注意: 仕様により slots[time] が予約数を表すか残数を表すかは実装依存だが、
-                                    // 元コードの cancelReservation で slots[time] - 1 しているので、slots[time]は「現在の予約数」と推測される。
-                                    
-                                    return (
-                                        <div key={time} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
-                                            <div className="bg-gray-700 px-3 py-2 flex justify-between items-center">
-                                                <h3 className="font-bold text-lg">{time}</h3>
-                                                <span className={`text-xs px-2 py-0.5 rounded ${resList.length >= targetShop.capacity ? "bg-red-900 text-red-200" : "bg-blue-900 text-blue-200"}`}>
-                                                    {resList.length} / {targetShop.capacity} 組
-                                                </span>
-                                            </div>
-                                            <div className="p-2">
-                                                {resList.length === 0 ? (
-                                                    <div className="text-center text-gray-600 text-xs py-2">予約なし</div>
-                                                ) : (
-                                                    <div className="grid gap-2">
-                                                        {resList.map((res: any, idx: number) => {
-                                                            const isHighlight = searchUserId && res.userId.includes(searchUserId.toUpperCase());
-                                                            const isUsed = res.status === "used";
-
-                                                            return (
-                                                                <div key={idx} className={`p-2 rounded border flex justify-between items-center transition
-                                                                    ${isUsed ? "bg-gray-900 border-gray-800 opacity-60" : "bg-gray-700/50 border-gray-600"}
-                                                                    ${isHighlight ? "ring-2 ring-pink-500 bg-pink-900/20" : ""}
-                                                                `}>
-                                                                    <div>
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="font-mono text-yellow-400 font-bold">{res.userId}</span>
-                                                                            {isUsed && <span className="text-[10px] bg-gray-600 px-1 rounded">入場済</span>}
-                                                                        </div>
-                                                                        <div className="text-xs text-gray-400">人数: {res.groupSize || "?"}名</div>
-                                                                    </div>
-                                                                    <div className="flex gap-2">
-                                                                        {!isUsed ? (
-                                                                            <button 
-                                                                                onClick={() => toggleReservationStatus(targetShop, res, "used")}
-                                                                                className="bg-green-600 text-xs px-3 py-2 rounded hover:bg-green-500 font-bold"
-                                                                            >
-                                                                                入場
-                                                                            </button>
-                                                                        ) : (
-                                                                            <button 
-                                                                                onClick={() => toggleReservationStatus(targetShop, res, "reserved")}
-                                                                                className="bg-gray-600 text-xs px-3 py-2 rounded hover:bg-gray-500"
-                                                                            >
-                                                                                戻す
-                                                                            </button>
-                                                                        )}
-                                                                        <button 
-                                                                            onClick={() => cancelReservation(targetShop, res)}
-                                                                            className="bg-red-900/50 text-red-200 text-xs px-2 py-2 rounded hover:bg-red-900 border border-red-800"
-                                                                        >
-                                                                            削除
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
+                    {/* --- ここに各モードごとの管理UIが入ります（省略されていた部分の補完） --- */}
+                    {targetShop.isOrderMode ? (
+                        /* オーダー制の管理画面 */
+                        <div>
+                            <h3 className="text-orange-400 font-bold mb-4">📦 オーダー在庫管理</h3>
+                            <div className="space-y-2">
+                                {targetShop.menu?.map((item: any, idx: number) => (
+                                    <div key={idx} className="flex justify-between items-center bg-gray-900 p-3 rounded border border-gray-700">
+                                        <div className="font-bold">{item.name}</div>
+                                        <div className="flex items-center gap-4">
+                                            <div className="text-sm text-gray-400">¥{item.price}</div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-500">在庫:</span>
+                                                {/* ここでも簡易的に在庫増減できるようにボタンを配置 */}
+                                                <button onClick={() => updateStock(targetShop, idx, Math.max(0, item.stock - 1))} className="w-6 h-6 bg-gray-700 rounded text-center">-</button>
+                                                <span className="w-8 text-center font-mono">{item.stock}</span>
+                                                <button onClick={() => updateStock(targetShop, idx, item.stock + 1)} className="w-6 h-6 bg-gray-700 rounded text-center">+</button>
                                             </div>
                                         </div>
-                                    );
-                                })}
+                                    </div>
+                                ))}
+                                {(!targetShop.menu || targetShop.menu.length === 0) && <div className="text-gray-500 text-center">メニューがありません</div>}
                             </div>
-                        )}
-                    </div>
+                        </div>
+                    ) : targetShop.isQueueMode ? (
+                         /* 順番待ちの管理画面 */
+                        <div>
+                            <h3 className="text-green-400 font-bold mb-4">🔢 順番待ち管理</h3>
+                            {(!targetShop.queue || targetShop.queue.length === 0) ? (
+                                <div className="text-gray-500 text-center py-8">待ち列はありません</div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {targetShop.queue.map((ticket: any) => (
+                                        <div key={ticket.ticketId} className="flex justify-between items-center bg-gray-900 p-3 rounded border border-gray-700">
+                                            <div>
+                                                <div className="font-mono text-xl text-yellow-400">No.{ticket.ticketId}</div>
+                                                <div className="text-xs text-gray-500">User: {ticket.userId}</div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {ticket.status !== "ready" && (
+                                                    <button onClick={() => handleQueueAction(targetShop, ticket, "call")} className="bg-yellow-600 hover:bg-yellow-500 px-3 py-1 rounded text-sm">呼出</button>
+                                                )}
+                                                <button onClick={() => handleQueueAction(targetShop, ticket, "enter")} className="bg-green-600 hover:bg-green-500 px-3 py-1 rounded text-sm">入場</button>
+                                                <button onClick={() => handleQueueAction(targetShop, ticket, "cancel")} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">取消</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        /* 時間予約制の管理画面 */
+                        <div>
+                            <h3 className="text-blue-400 font-bold mb-4">🕒 予約枠管理</h3>
+                             <div className="grid gap-4">
+                                {Object.entries(getReservationsByTime(targetShop)).map(([time, resList]: [string, any]) => (
+                                    <div key={time} className="bg-gray-900 p-3 rounded border border-gray-700">
+                                        <div className="flex justify-between items-center mb-2 border-b border-gray-800 pb-1">
+                                            <span className="font-mono text-lg font-bold">{time}</span>
+                                            <span className="text-xs text-gray-400">予約: {resList.length} / {targetShop.slots?.[time] !== undefined ? (Number(targetShop.slots[time]) + resList.length) : "-"}</span>
+                                        </div>
+                                        {resList.length === 0 ? (
+                                            <div className="text-xs text-gray-600">予約なし</div>
+                                        ) : (
+                                            <div className="space-y-2">
+                                                {resList.map((res: any, i: number) => (
+                                                    <div key={i} className="flex justify-between items-center text-sm bg-gray-800 p-2 rounded">
+                                                        <span className="font-mono text-gray-300">{res.userId}</span>
+                                                        <div className="flex gap-2">
+                                                            {res.status === "used" ? (
+                                                                <button onClick={() => toggleReservationStatus(targetShop, res, "reserved")} className="text-green-500 text-xs border border-green-500 px-2 py-0.5 rounded">入場済</button>
+                                                            ) : (
+                                                                <button onClick={() => toggleReservationStatus(targetShop, res, "used")} className="bg-blue-600 hover:bg-blue-500 px-2 py-0.5 rounded text-xs">入場する</button>
+                                                            )}
+                                                            <button onClick={() => cancelReservation(targetShop, res)} className="text-red-400 hover:text-red-300 text-xs">削除</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                             </div>
+                        </div>
+                    )}
+
                 </div>
             </div>
         )}
+
       </div>
     </div>
   );
