@@ -1,4 +1,4 @@
-// ＃生徒会用管理画面 (app/admin/super/page.tsx)
+//app/admin/super/page.tsx
 "use client";
 import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整
@@ -45,8 +45,13 @@ export default function SuperAdminPage() {
   const [capacity, setCapacity] = useState(3);
   const [isPaused, setIsPaused] = useState(false);
 
-  // ★追加: 運用モード（予約制 or 順番待ち制）
+  // ★修正: 運用モード（予約制 or 順番待ち制 or オーダー制）
   const [isQueueMode, setIsQueueMode] = useState(false);
+  const [isOrderMode, setIsOrderMode] = useState(false); // ★追加
+
+  // ★追加: メニュー登録用ステート
+  const [menu, setMenu] = useState<any[]>([]);
+  const [menuInput, setMenuInput] = useState({ name: "", price: 0, stock: 0, limit: 1 });
 
   // 検索用
   const [searchUserId, setSearchUserId] = useState("");
@@ -66,9 +71,6 @@ export default function SuperAdminPage() {
     }
     setMyUserId(stored);
 
-    // ★修正ポイント: 増殖バグ防止
-    // onSnapshotはデータ変更時に毎回新しい配列を返しますが、
-    // ここで確実にStateを丸ごと置き換えることで、画面上の増殖を防ぎます。
     const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const newData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(newData);
@@ -80,10 +82,12 @@ export default function SuperAdminPage() {
   const stats = useMemo(() => {
       const totalVenues = attractions.length;
       const pausedVenues = attractions.filter(a => a.isPaused).length;
-      // 予約制の場合はreservations、並び制の場合はqueueの待機数をカウント
+      
       const totalReservations = attractions.reduce((sum, shop) => {
-        if (shop.isQueueMode && shop.queue) {
-             // 待機中と呼び出し中のみカウント
+        if (shop.isOrderMode) {
+             // ★追加: オーダー制の場合は未完了のオーダー数をカウント
+             return sum + (shop.orders?.filter((o:any) => o.status !== 'completed').length || 0);
+        } else if (shop.isQueueMode && shop.queue) {
              return sum + shop.queue.filter((t: any) => ['waiting', 'ready'].includes(t.status)).length;
         }
         return sum + (shop.reservations?.length || 0);
@@ -110,14 +114,14 @@ export default function SuperAdminPage() {
   };
 
   const handleBulkDeleteReservations = async () => {
-      if(!confirm("【危険】全会場の「予約データ」および「待機列」を全て削除します。\n本当によろしいですか？")) return;
+      if(!confirm("【危険】全会場の「予約・並び・注文データ」を全て削除します。\n本当によろしいですか？")) return;
       if(prompt("確認のため 'DELETE' と入力してください") !== "DELETE") return;
       try {
           const promises = attractions.map(shop => {
               const resetSlots: any = {};
               Object.keys(shop.slots || {}).forEach(key => { resetSlots[key] = 0; });
-              // 予約配列とキュー配列の両方をリセット
-              return updateDoc(doc(db, "attractions", shop.id), { reservations: [], queue: [], slots: resetSlots });
+              // ★修正: ordersもリセット対象に追加
+              return updateDoc(doc(db, "attractions", shop.id), { reservations: [], queue: [], orders: [], slots: resetSlots });
           });
           await Promise.all(promises);
           alert("完了しました。");
@@ -144,6 +148,9 @@ export default function SuperAdminPage() {
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
     setIsQueueMode(false); 
+    setIsOrderMode(false); // ★追加
+    setMenu([]); // ★追加
+    setMenuInput({ name: "", price: 0, stock: 0, limit: 1 }); // ★追加
   };
 
   const startEdit = (shop: any) => {
@@ -157,7 +164,19 @@ export default function SuperAdminPage() {
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
     setIsQueueMode(shop.isQueueMode || false);
+    setIsOrderMode(shop.isOrderMode || false); // ★追加
+    setMenu(shop.menu || []); // ★追加
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // ★追加: メニュー追加処理
+  const addMenuItem = () => {
+      if (!menuInput.name) return;
+      setMenu([...menu, { ...menuInput, id: Date.now().toString() }]);
+      setMenuInput({ name: "", price: 0, stock: 0, limit: 1 });
+  };
+  const removeMenuItem = (index: number) => {
+      setMenu(menu.filter((_, i) => i !== index));
   };
 
   const handleSave = async () => {
@@ -172,17 +191,19 @@ export default function SuperAdminPage() {
     let shouldResetSlots = true;
     let existingReservations = [];
     let existingQueue = [];
+    let existingOrders = []; // ★追加
 
     if (isEditing) {
         const currentShop = attractions.find(s => s.id === originalId);
         if (currentShop) {
             existingReservations = currentShop.reservations || [];
             existingQueue = currentShop.queue || []; 
+            existingOrders = currentShop.orders || []; // ★追加
             if (currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
                 slots = currentShop.slots;
                 shouldResetSlots = false;
             } else {
-                if(!isQueueMode && !confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
+                if(!isQueueMode && !isOrderMode && !confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
             }
         }
     }
@@ -202,15 +223,18 @@ export default function SuperAdminPage() {
       name: newName, password, groupLimit,
       department, imageUrl, description,
       openTime, closeTime, duration, capacity, isPaused, slots,
-      isQueueMode, 
+      isQueueMode, isOrderMode, // ★追加
+      menu: isOrderMode ? menu : [], // ★追加
       reservations: existingReservations,
-      queue: existingQueue 
+      queue: existingQueue,
+      orders: existingOrders // ★追加
     };
 
     // 新規作成時は空配列で初期化
     if (!isEditing) {
         data.reservations = [];
         data.queue = [];
+        data.orders = [];
     }
 
     try {
@@ -234,7 +258,7 @@ export default function SuperAdminPage() {
     setExpandedShopId(null);
   };
 
-  // --- 予約操作 (従来モード用) ---
+  // --- 予約操作 ---
   const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
      if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消しますか？")) return;
      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
@@ -249,9 +273,8 @@ export default function SuperAdminPage() {
       await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
 
-  // --- ★ 順番待ちキュー操作 (修正済み) ---
+  // --- 順番待ちキュー操作 ---
   const updateQueueStatus = async (shop: any, ticket: any, newStatus: 'waiting' | 'ready' | 'completed' | 'canceled') => {
-    // 確認ダイアログ
     let msg = "";
     if (newStatus === 'ready') msg = "呼び出しを行いますか？\n（ユーザーの画面が赤くなります）";
     if (newStatus === 'completed') msg = "【入場処理】\nこのチケットを入場済みにし、リストから削除しますか？";
@@ -259,31 +282,36 @@ export default function SuperAdminPage() {
       
     if (newStatus !== 'waiting' && !confirm(msg)) return;
 
-    // ★修正ポイント: 入場(completed)または取消(canceled)ならデータを消す
     if (newStatus === 'completed' || newStatus === 'canceled') {
-        // ticketIdがあればそれで、なければuserIdで一致するものを除外（削除）
         const newQueue = shop.queue.filter((t: any) => {
             if (ticket.ticketId) {
                 return t.ticketId !== ticket.ticketId;
             } else {
-                return t.userId !== ticket.userId; // 旧データ互換
+                return t.userId !== ticket.userId;
             }
         });
         await updateDoc(doc(db, "attractions", shop.id), { queue: newQueue });
     
     } else {
-        // ★修正ポイント: ステータス更新（呼び出しなど）
         const updatedQueue = shop.queue.map((t: any) => {
-            // ticketId で厳密に照合
             const isMatch = ticket.ticketId ? (t.ticketId === ticket.ticketId) : (t.userId === ticket.userId);
-            
-            if (isMatch) {
-                return { ...t, status: newStatus };
-            }
+            if (isMatch) return { ...t, status: newStatus };
             return t;
         });
         await updateDoc(doc(db, "attractions", shop.id), { queue: updatedQueue });
     }
+  };
+
+  // --- ★追加: オーダー操作・在庫操作 ---
+  const updateStock = async (shop: any, itemIndex: number, newStock: number) => {
+    const updatedMenu = [...shop.menu];
+    updatedMenu[itemIndex].stock = newStock;
+    await updateDoc(doc(db, "attractions", shop.id), { menu: updatedMenu });
+  };
+
+  const updateOrderStatus = async (shop: any, orderId: string, newStatus: string) => {
+    const updatedOrders = shop.orders.map((o:any) => o.id === orderId ? { ...o, status: newStatus } : o);
+    await updateDoc(doc(db, "attractions", shop.id), { orders: updatedOrders });
   };
 
   // 表示ヘルパー
@@ -297,20 +325,30 @@ export default function SuperAdminPage() {
 
   const getQueueList = (shop: any) => {
       if (!shop.queue) return { active: [], history: [] };
-      // 入場(completed)は削除されるため、ここには基本的に waiting か ready しか残りません
       const active = shop.queue.filter((t: any) => ['waiting', 'ready'].includes(t.status));
-      // ※ historyは「削除」仕様になったため、空になるか、もし誤って残っている場合のみ表示されます
       const history = shop.queue.filter((t: any) => ['completed', 'canceled'].includes(t.status));
       
-      // ソート: 呼び出し中(ready)を先頭に、あとはticketId順(昇順)
       active.sort((a: any, b: any) => {
           if (a.status === 'ready' && b.status !== 'ready') return -1;
           if (a.status !== 'ready' && b.status === 'ready') return 1;
-          // ticketId (文字列) で比較
           return (a.ticketId || "0").localeCompare(b.ticketId || "0");
       });
 
       return { active, history };
+  };
+
+  // ★追加: 注文リストのソート（支払い待ちを優先）
+  const getSortedOrders = (shop: any) => {
+      if (!shop.orders) return [];
+      return [...shop.orders].sort((a: any, b: any) => {
+          // お支払い強調（payment_waiting などを上位に）
+          const isAPaying = a.status === 'payment_waiting' || a.status === 'payment_open';
+          const isBPaying = b.status === 'payment_waiting' || b.status === 'payment_open';
+          if (isAPaying && !isBPaying) return -1;
+          if (!isAPaying && isBPaying) return 1;
+          // 新しい順
+          return b.createdAt - a.createdAt;
+      });
   };
 
   return (
@@ -323,7 +361,7 @@ export default function SuperAdminPage() {
       <div className="max-w-4xl mx-auto p-4 pb-32">
         <div className="mb-6 border-b border-gray-700 pb-4">
           <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
-           
+            
           <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
               <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
               <div className="mt-4 pt-4 border-t border-gray-700">
@@ -370,22 +408,59 @@ export default function SuperAdminPage() {
 
                   {isEditing && manualId !== originalId && <div className="text-xs text-yellow-400 font-bold mb-2">⚠️ IDが変更されています。</div>}
 
-                  {/* ★ 運用モード選択スイッチ */}
+                  {/* ★ 運用モード選択スイッチ（3択） */}
                   <div className="bg-gray-900 p-3 rounded border border-gray-600 mb-3">
                       <label className="text-xs text-gray-400 mb-2 block font-bold">運用モード:</label>
-                      <div className="flex gap-4">
-                          <label className={`flex items-center gap-2 cursor-pointer p-2 rounded w-1/2 justify-center border ${!isQueueMode ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
-                              <input type="radio" name="mode" checked={!isQueueMode} onChange={() => setIsQueueMode(false)} className="hidden" />
-                              📅 時間予約制
+                      <div className="flex gap-2 text-xs md:text-sm">
+                          <label className={`flex-1 flex items-center justify-center gap-1 cursor-pointer p-2 rounded border ${!isQueueMode && !isOrderMode ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
+                              <input type="radio" name="mode" checked={!isQueueMode && !isOrderMode} onChange={() => { setIsQueueMode(false); setIsOrderMode(false); }} className="hidden" />
+                              📅 時間予約
                           </label>
-                          <label className={`flex items-center gap-2 cursor-pointer p-2 rounded w-1/2 justify-center border ${isQueueMode ? 'bg-purple-900 border-purple-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
-                              <input type="radio" name="mode" checked={isQueueMode} onChange={() => setIsQueueMode(true)} className="hidden" />
-                              🚶‍♂️ 順番待ち制 (列)
+                          <label className={`flex-1 flex items-center justify-center gap-1 cursor-pointer p-2 rounded border ${isQueueMode ? 'bg-purple-900 border-purple-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
+                              <input type="radio" name="mode" checked={isQueueMode} onChange={() => { setIsQueueMode(true); setIsOrderMode(false); }} className="hidden" />
+                              🚶‍♂️ 並び順
+                          </label>
+                          <label className={`flex-1 flex items-center justify-center gap-1 cursor-pointer p-2 rounded border ${isOrderMode ? 'bg-green-900 border-green-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
+                              <input type="radio" name="mode" checked={isOrderMode} onChange={() => { setIsQueueMode(false); setIsOrderMode(true); }} className="hidden" />
+                              🛒 オーダー
                           </label>
                       </div>
                   </div>
 
-                  {/* ★UI変更: ラベル付き入力エリア */}
+                  {/* ★追加: メニュー登録フォーム (オーダー制のみ表示) */}
+                  {isOrderMode && (
+                      <div className="bg-green-900/20 p-3 rounded border border-green-700 mb-3">
+                        <label className="text-xs text-green-400 block mb-2 font-bold">🍔 メニュー登録</label>
+                        <div className="flex gap-2 mb-2 items-end">
+                            <div className="flex-1">
+                                <label className="text-[10px] text-gray-400">品名</label>
+                                <input className="w-full bg-gray-800 p-1.5 rounded text-sm" value={menuInput.name} onChange={e=>setMenuInput({...menuInput, name: e.target.value})} />
+                            </div>
+                            <div className="w-16">
+                                <label className="text-[10px] text-gray-400">価格</label>
+                                <input type="number" className="w-full bg-gray-800 p-1.5 rounded text-sm" value={menuInput.price} onChange={e=>setMenuInput({...menuInput, price: Number(e.target.value)})} />
+                            </div>
+                            <div className="w-14">
+                                <label className="text-[10px] text-gray-400">在庫</label>
+                                <input type="number" className="w-full bg-gray-800 p-1.5 rounded text-sm" value={menuInput.stock} onChange={e=>setMenuInput({...menuInput, stock: Number(e.target.value)})} />
+                            </div>
+                            <div className="w-14">
+                                <label className="text-[10px] text-gray-400">制限</label>
+                                <input type="number" className="w-full bg-gray-800 p-1.5 rounded text-sm" value={menuInput.limit} onChange={e=>setMenuInput({...menuInput, limit: Number(e.target.value)})} />
+                            </div>
+                            <button onClick={addMenuItem} className="bg-green-600 px-3 py-1.5 rounded font-bold text-sm h-8">+</button>
+                        </div>
+                        <div className="space-y-1">
+                            {menu.map((m, i) => (
+                                <div key={i} className="flex justify-between items-center bg-gray-800 p-2 rounded text-xs">
+                                    <span>{m.name} (¥{m.price}) [残:{m.stock}] (限:{m.limit})</span>
+                                    <button onClick={()=>removeMenuItem(i)} className="text-red-400 font-bold">×</button>
+                                </div>
+                            ))}
+                        </div>
+                      </div>
+                  )}
+
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 bg-gray-900 p-3 rounded border border-gray-600">
                       <div>
                           <label className="text-xs text-gray-400 block mb-1 font-bold">開始時刻</label>
@@ -450,10 +525,12 @@ export default function SuperAdminPage() {
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
-                    // 検索ヒット判定（予約 or キュー）
                     let hasUser = false;
                     let totalCount = 0;
-                    if (shop.isQueueMode) {
+                    if (shop.isOrderMode) {
+                         hasUser = searchUserId && shop.orders?.some((o:any) => o.userId?.includes(searchUserId.toUpperCase()));
+                         totalCount = shop.orders?.filter((o:any) => o.status !== 'completed').length || 0;
+                    } else if (shop.isQueueMode) {
                         hasUser = searchUserId && shop.queue?.some((t:any) => t.userId?.includes(searchUserId.toUpperCase()));
                         totalCount = shop.queue?.filter((t:any) => ['waiting', 'ready'].includes(t.status)).length || 0;
                     } else {
@@ -464,7 +541,6 @@ export default function SuperAdminPage() {
                     return (
                         <button key={shop.id} onClick={() => setExpandedShopId(shop.id)} className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}>
                             <div className="flex items-center gap-4">
-                                {/* 画像 */}
                                 {shop.imageUrl ? (
                                     <img src={shop.imageUrl} alt={shop.name} referrerPolicy="no-referrer" className="w-14 h-14 object-cover rounded-md bg-gray-900 shrink-0" />
                                 ) : (
@@ -478,17 +554,18 @@ export default function SuperAdminPage() {
                                     <div className="flex items-center gap-2">
                                         <span className="font-bold text-lg leading-tight line-clamp-1">{shop.name}</span>
                                         {shop.isPaused && <span className="text-[10px] bg-red-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">停止中</span>}
-                                        {/* モードバッジ */}
-                                        {shop.isQueueMode ? 
-                                            <span className="text-[10px] bg-purple-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">並び順</span> :
-                                            <span className="text-[10px] bg-blue-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">予約制</span>
+                                        {shop.isOrderMode ? 
+                                            <span className="text-[10px] bg-green-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">オーダー</span> :
+                                            (shop.isQueueMode ? 
+                                                <span className="text-[10px] bg-purple-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">並び順</span> :
+                                                <span className="text-[10px] bg-blue-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">予約制</span>)
                                         }
                                     </div>
                                 </div>
                             </div>
                             <div className="flex items-center gap-4 pl-2">
                                 <div className="text-right">
-                                    <span className="text-[10px] text-gray-500 block">{shop.isQueueMode ? "WAITING" : "TOTAL"}</span>
+                                    <span className="text-[10px] text-gray-500 block">{shop.isOrderMode ? "ORDERS" : (shop.isQueueMode ? "WAITING" : "TOTAL")}</span>
                                     <span className="font-mono text-xl text-blue-400">{String(totalCount).padStart(3, '0')}</span>
                                 </div>
                                 <div className="text-gray-400 text-2xl">›</div>
@@ -514,7 +591,7 @@ export default function SuperAdminPage() {
                             {targetShop.department && <span className="text-[10px] font-bold bg-blue-500 text-white px-2 py-0.5 rounded mb-1 inline-block border border-blue-400">{targetShop.department}</span>}
                             <h2 className="text-2xl font-bold flex items-center gap-2"><span className="text-yellow-400 font-mono">{targetShop.id}</span>{targetShop.name}</h2>
                             <p className="text-xs text-gray-400 mt-1">
-                                {targetShop.isQueueMode ? <span className="text-purple-400 font-bold">🚶‍♂️ 順番待ち制 (整理券)</span> : <span className="text-blue-400 font-bold">📅 時間予約制</span>} | 
+                                {targetShop.isOrderMode ? <span className="text-green-400 font-bold">🛒 オーダー制</span> : (targetShop.isQueueMode ? <span className="text-purple-400 font-bold">🚶‍♂️ 順番待ち制 (整理券)</span> : <span className="text-blue-400 font-bold">📅 時間予約制</span>)} | 
                                 Pass: {targetShop.password} | 定員: {targetShop.capacity}組
                             </p>
                         </div>
@@ -531,13 +608,74 @@ export default function SuperAdminPage() {
                             </div>
                         )}
 
-                        {/* ★ ここから条件分岐：予約制 or 順番待ち制 */}
-                        {targetShop.isQueueMode ? (
+                        {/* ★ 条件分岐：オーダー制 / 予約制 / 順番待ち制 */}
+                        {targetShop.isOrderMode ? (
+                             // --- ★追加: オーダー制のUI ---
+                             <div>
+                                 {/* 在庫管理エリア */}
+                                 <div className="bg-gray-900 rounded p-3 border border-gray-700 mb-4">
+                                     <h3 className="text-xs font-bold text-gray-400 mb-2">📦 在庫管理 (Stock Control)</h3>
+                                     <div className="grid gap-2 grid-cols-2 md:grid-cols-3">
+                                         {targetShop.menu?.map((m: any, idx: number) => (
+                                             <div key={idx} className="bg-gray-800 p-2 rounded flex justify-between items-center border border-gray-700">
+                                                 <span className="text-sm font-bold truncate flex-1">{m.name}</span>
+                                                 <div className="flex items-center gap-1">
+                                                    <button onClick={() => updateStock(targetShop, idx, Math.max(0, m.stock - 1))} className="bg-red-900 text-red-200 px-2 rounded">-</button>
+                                                    <input 
+                                                        type="number" 
+                                                        value={m.stock} 
+                                                        onChange={(e) => updateStock(targetShop, idx, Number(e.target.value))}
+                                                        className="w-10 bg-transparent text-center font-mono font-bold"
+                                                    />
+                                                    <button onClick={() => updateStock(targetShop, idx, m.stock + 1)} className="bg-green-900 text-green-200 px-2 rounded">+</button>
+                                                 </div>
+                                             </div>
+                                         ))}
+                                     </div>
+                                 </div>
+
+                                 {/* 注文リスト */}
+                                 <h3 className="text-lg font-bold mb-4 text-green-400 border-b border-gray-700 pb-2">🛒 注文リスト (Orders)</h3>
+                                 <div className="space-y-2">
+                                     {getSortedOrders(targetShop).map((order: any) => {
+                                         // お支払い強調
+                                         const isPaying = order.status === 'payment_waiting' || order.status === 'payment_open';
+                                         const isCompleted = order.status === 'completed';
+
+                                         return (
+                                             <div key={order.id} className={`p-3 rounded-lg border flex flex-col gap-2 ${isPaying ? 'bg-red-900 border-red-500 order-first' : (isCompleted ? 'bg-gray-800 border-gray-700 opacity-50' : 'bg-gray-800 border-gray-600')}`}>
+                                                 <div className="flex justify-between items-start">
+                                                     <div>
+                                                         <div className={`font-mono font-bold ${isPaying ? 'text-2xl text-white animate-pulse' : 'text-lg text-gray-300'}`}>
+                                                             {isPaying ? "💴 お支払い中" : `ID: ${order.userId}`}
+                                                         </div>
+                                                         <div className="text-xs text-gray-400">Total: ¥{order.total} | {new Date(order.createdAt).toLocaleTimeString()}</div>
+                                                     </div>
+                                                     <div className="flex gap-2">
+                                                         {!isCompleted && <button onClick={() => updateOrderStatus(targetShop, order.id, 'completed')} className="bg-blue-600 px-3 py-1 rounded text-xs font-bold">完了</button>}
+                                                         <button onClick={() => updateOrderStatus(targetShop, order.id, 'canceled')} className="bg-gray-600 px-2 py-1 rounded text-xs">取消</button>
+                                                     </div>
+                                                 </div>
+                                                 <div className="bg-black/30 p-2 rounded text-sm">
+                                                     {order.items?.map((item:any, i:number) => (
+                                                         <div key={i} className="flex justify-between">
+                                                             <span>{item.name} × {item.count}</span>
+                                                             <span>¥{item.price * item.count}</span>
+                                                         </div>
+                                                     ))}
+                                                 </div>
+                                             </div>
+                                         );
+                                     })}
+                                     {(!targetShop.orders || targetShop.orders.length === 0) && <div className="text-gray-500 text-center py-4">注文はありません</div>}
+                                 </div>
+                             </div>
+                        ) : targetShop.isQueueMode ? (
                             // --- 順番待ち制のUI ---
                             <div>
                                 <h3 className="text-lg font-bold mb-4 text-purple-400 border-b border-gray-700 pb-2">📋 待機列リスト (Queue)</h3>
                                 {(() => {
-                                    const { active, history } = getQueueList(targetShop);
+                                    const { active } = getQueueList(targetShop);
                                     if (active.length === 0) return <div className="text-center py-8 text-gray-500 bg-gray-900/50 rounded-lg">現在待機しているユーザーはいません。</div>;
                                     
                                     return (
@@ -549,7 +687,6 @@ export default function SuperAdminPage() {
                                                 return (
                                                     <div key={ticket.userId || index} className={`flex items-center justify-between p-3 rounded-lg border ${isReady ? 'bg-red-900/30 border-red-500 animate-pulse-slow' : 'bg-gray-700 border-gray-600'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
                                                         <div className="flex items-center gap-4">
-                                                            {/* ★修正ポイント: 6桁IDを表示 (無ければindex) */}
                                                             <div className={`text-2xl font-mono font-bold w-20 text-center ${isReady ? 'text-red-400' : 'text-gray-400'}`}>
                                                                 {ticket.ticketId ? ticket.ticketId : `#${index + 1}`}
                                                             </div>
@@ -558,27 +695,15 @@ export default function SuperAdminPage() {
                                                                     <span className="font-mono font-bold text-lg text-white">{ticket.userId}</span>
                                                                     <span className="bg-gray-800 text-xs px-2 py-0.5 rounded text-gray-300 border border-gray-600">{ticket.count || 1}名</span>
                                                                 </div>
-                                                                <div className="text-xs mt-1">
-                                                                    {isReady ? 
-                                                                        <span className="text-red-400 font-bold animate-pulse">🔴 呼び出し中</span> : 
-                                                                        <span className="text-blue-300">🔵 待機中</span>
-                                                                    }
+                                                                <div className="text-xs text-gray-500">
+                                                                    {isReady ? <span className="text-red-400 font-bold">⚠️ 呼び出し中</span> : "待機中"}
                                                                 </div>
                                                             </div>
                                                         </div>
-
-                                                        <div className="flex items-center gap-2">
-                                                            {!isReady && (
-                                                                <button onClick={() => updateQueueStatus(targetShop, ticket, 'ready')} className="bg-yellow-600 hover:bg-yellow-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
-                                                                    🔔 呼出
-                                                                </button>
-                                                            )}
-                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'completed')} className="bg-green-700 hover:bg-green-600 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
-                                                                ✅ 入場
-                                                            </button>
-                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'canceled')} className="bg-gray-600 hover:bg-gray-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg transition">
-                                                                ✖ 取消
-                                                            </button>
+                                                        <div className="flex gap-2">
+                                                            {!isReady && <button onClick={() => updateQueueStatus(targetShop, ticket, 'ready')} className="bg-yellow-600 hover:bg-yellow-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg">🔔 呼出</button>}
+                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'completed')} className="bg-green-700 hover:bg-green-600 text-white text-xs px-3 py-2 rounded font-bold shadow-lg">✅ 入場</button>
+                                                            <button onClick={() => updateQueueStatus(targetShop, ticket, 'canceled')} className="bg-gray-600 hover:bg-gray-500 text-white text-xs px-3 py-2 rounded font-bold shadow-lg">✖ 取消</button>
                                                         </div>
                                                     </div>
                                                 );
@@ -604,22 +729,25 @@ export default function SuperAdminPage() {
                                                 <div className="text-xs text-gray-600 py-1">予約なし</div>
                                             ) : (
                                                 <div className="space-y-2">
-                                                    {resList.map((res: any, idx: number) => (
-                                                        <div key={idx} className={`flex justify-between items-center p-2 rounded bg-gray-700 ${res.status === 'used' ? 'opacity-50 grayscale' : ''}`}>
-                                                            <div>
-                                                                <div className="font-bold font-mono text-sm">{res.userId}</div>
-                                                                <div className="text-xs text-gray-400">{res.count}名</div>
+                                                    {resList.map((res: any, idx: number) => {
+                                                        const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
+                                                        return (
+                                                            <div key={idx} className={`flex justify-between items-center p-2 rounded bg-gray-700 ${res.status === 'used' ? 'opacity-50 grayscale' : ''} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
+                                                                <div>
+                                                                    <div className="font-bold font-mono text-sm">{res.userId}</div>
+                                                                    <div className="text-xs text-gray-400">{res.count}名</div>
+                                                                </div>
+                                                                <div className="flex gap-2">
+                                                                    {res.status !== 'used' ? (
+                                                                        <button onClick={() => toggleReservationStatus(targetShop, res, 'used')} className="bg-green-600 text-[10px] px-2 py-1 rounded">入場</button>
+                                                                    ) : (
+                                                                        <button onClick={() => toggleReservationStatus(targetShop, res, 'reserved')} className="bg-gray-500 text-[10px] px-2 py-1 rounded">戻す</button>
+                                                                    )}
+                                                                    <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-900/50 text-red-200 text-[10px] px-2 py-1 rounded border border-red-900">取消</button>
+                                                                </div>
                                                             </div>
-                                                            <div className="flex gap-2">
-                                                                {res.status !== 'used' ? (
-                                                                    <button onClick={() => toggleReservationStatus(targetShop, res, 'used')} className="bg-green-600 text-[10px] px-2 py-1 rounded">入場</button>
-                                                                ) : (
-                                                                    <button onClick={() => toggleReservationStatus(targetShop, res, 'reserved')} className="bg-gray-500 text-[10px] px-2 py-1 rounded">戻す</button>
-                                                                )}
-                                                                <button onClick={() => cancelReservation(targetShop, res)} className="bg-red-900/50 text-red-200 text-[10px] px-2 py-1 rounded border border-red-900">取消</button>
-                                                            </div>
-                                                        </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             )}
                                         </div>
