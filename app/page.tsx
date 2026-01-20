@@ -1,221 +1,427 @@
-// app/admin/page.tsx
+// app/page.tsx
 "use client";
-import { useState, useEffect } from "react";
-import { db } from "../firebase";
-import { 
-  collection, 
-  onSnapshot, 
-  addDoc, 
-  deleteDoc, 
-  doc, 
-  updateDoc, 
-  orderBy, 
-  query 
-} from "firebase/firestore";
+import { useState, useEffect, useRef } from "react";
+import { db, auth } from "../firebase"; // パスは環境に合わせて調整してください
+import { collection, onSnapshot, doc, updateDoc, arrayUnion, arrayRemove, increment, getDoc, setDoc, serverTimestamp, Timestamp } from "firebase/firestore";
+import { signInAnonymously } from "firebase/auth";
+import { Ticket, Shop, DraftBooking } from "./types";
+import { NotificationPanel, TicketCard, ShopList, ShopDetail, BookingModal, QrModal } from "./components";
 
-// --- 型定義 (Admin用) ---
-// User側と共通ですが、Admin専用のフィールド操作があるため再定義
-type MenuItem = {
-  id: string;
-  name: string;
-  price: number;
-  stock: number;
-  limit: number;
-};
+export default function Home() {
+  const [attractions, setAttractions] = useState<Shop[]>([]);
+  const [myTickets, setMyTickets] = useState<Ticket[]>([]);
+  const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
+  const [userId, setUserId] = useState("");
+  const [isBanned, setIsBanned] = useState(false);
 
-type Order = {
-  id: string;
-  ticketId: string;
-  items: { name: string; count: number }[];
-  totalPrice: number;
-  status: "ordered" | "paying" | "completed";
-  createdAt: any;
-};
+  // ★通知設定（デフォルトOFF）
+  const [enableSound, setEnableSound] = useState(false);
+  const [enableVibrate, setEnableVibrate] = useState(false);
 
-export default function AdminPage() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [menu, setMenu] = useState<MenuItem[]>([]);
-  
-  // メニュー登録フォーム用
-  const [newItem, setNewItem] = useState({ name: "", price: 0, stock: 0, limit: 2 });
+  // ★QRコード関連のステート
+  const [qrTicket, setQrTicket] = useState<Ticket | null>(null);
 
-  // 1. リアルタイム監視 (Module 2)
-  useEffect(() => {
-    // 注文監視
-    const qOrders = query(collection(db, "orders"), orderBy("createdAt", "desc"));
-    const unsubOrders = onSnapshot(qOrders, (snapshot) => {
-      const fetchedOrders = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order));
-      
-      // Module 2: sortAndRenderOrders (お支払い強調機能)
-      // payingを最優先、次にcreatedAt順など
-      const sorted = fetchedOrders.sort((a, b) => {
-        if (a.status === 'paying' && b.status !== 'paying') return -1;
-        if (a.status !== 'paying' && b.status === 'paying') return 1;
-        // paying同士、またはそれ以外は新しい順(desc)のまま
-        return 0;
-      });
-      setOrders(sorted);
-    });
+  // 音声再生用の参照 (Web Audio API)
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
-    // メニュー監視
-    const unsubMenu = onSnapshot(collection(db, "menu"), (snapshot) => {
-      setMenu(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
-    });
+  // 申し込み画面用の状態
+  const [draftBooking, setDraftBooking] = useState<DraftBooking | null>(null);
+  const [peopleCount, setPeopleCount] = useState<number>(1);
 
-    return () => {
-      unsubOrders();
-      unsubMenu();
-    };
-  }, []);
-
-  // --- Module 1: メニュー管理関数 ---
-  const addMenuItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItem.name) return;
+  // ★音を鳴らす関数
+  const playBeep = () => {
     try {
-      await addDoc(collection(db, "menu"), newItem);
-      setNewItem({ name: "", price: 0, stock: 0, limit: 2 }); // Reset
-      alert("メニューを追加しました");
-    } catch (err) {
-      console.error(err);
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) return;
+        
+        if (!audioCtxRef.current) {
+            audioCtxRef.current = new AudioContextClass();
+        }
+        if (audioCtxRef.current.state === 'suspended') {
+            audioCtxRef.current.resume();
+        }
+
+        const ctx = audioCtxRef.current;
+        const oscillator = ctx.createOscillator();
+        const gainNode = ctx.createGain();
+
+        oscillator.type = 'sine'; 
+        oscillator.frequency.setValueAtTime(880, ctx.currentTime); 
+        oscillator.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.5); 
+
+        gainNode.gain.setValueAtTime(0.5, ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+
+        oscillator.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        oscillator.start();
+        oscillator.stop(ctx.currentTime + 0.5);
+    } catch (e) {
+        console.error("Audio play failed", e);
     }
   };
 
-  const deleteMenuItem = async (id: string) => {
-    if (!confirm("削除しますか？")) return;
-    await deleteDoc(doc(db, "menu", id));
+  // ★音量テストボタン用
+  const handleTestSound = () => {
+     playBeep();
+     if (typeof navigator !== "undefined" && navigator.vibrate) {
+         navigator.vibrate(200);
+     }
+     alert("テスト音再生中\n(マナーモードや音量設定を確認してください)");
   };
 
-  // --- Module 2: 在庫緊急修正 ---
-  const manualUpdateStock = async (id: string, currentStock: number) => {
-    const newStockStr = prompt("新しい在庫数を入力してください", String(currentStock));
-    if (newStockStr === null) return;
-    const newStock = parseInt(newStockStr);
-    if (isNaN(newStock)) return;
+  // 1. 初期化とデータ監視
+  useEffect(() => {
+    signInAnonymously(auth).catch((e) => console.error(e));
+    
+    let storedId = localStorage.getItem("bunkasai_user_id");
+    if (!storedId) {
+      storedId = Math.random().toString(36).substring(2, 8).toUpperCase();
+      localStorage.setItem("bunkasai_user_id", storedId);
+    }
+    setUserId(storedId);
 
-    await updateDoc(doc(db, "menu", id), { stock: newStock });
+    const userDocRef = doc(db, "users", storedId);
+    getDoc(userDocRef).then((snap) => {
+        if (!snap.exists()) {
+            setDoc(userDocRef, {
+                userId: storedId,
+                createdAt: serverTimestamp(),
+                isBanned: false        
+            }).catch(err => console.error("User regist error:", err));
+        }
+    });
+    const unsubUser = onSnapshot(userDocRef, (snap) => {
+        if (snap.exists()) setIsBanned(snap.data().isBanned === true);
+    });
+
+    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
+      const shopData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Shop));
+      setAttractions(shopData);
+
+      const newMyTickets: Ticket[] = [];
+      
+      shopData.forEach((shop: Shop) => {
+        if (shop.reservations) {
+          shop.reservations.forEach((r: any) => {
+            if (r.userId === storedId) {
+              newMyTickets.push({
+                uniqueKey: `slot_${shop.id}_${r.time}`,
+                shopId: shop.id,
+                shopName: shop.name,
+                shopDepartment: shop.department,
+                time: r.time,
+                timestamp: r.timestamp,
+                status: r.status,
+                count: r.count || 1,
+                isQueue: false
+              });
+            }
+          });
+        }
+
+        if (shop.queue) {
+          shop.queue.forEach((q: any) => {
+            if (q.userId === storedId) {
+              let groupsAhead = 0;
+              if (q.status === 'waiting') {
+                const myNum = parseInt(q.ticketId || "999999");
+                groupsAhead = shop.queue!.filter((other: any) => 
+                  other.status === 'waiting' && parseInt(other.ticketId || "999999") < myNum
+                ).length;
+              }
+
+              newMyTickets.push({
+                uniqueKey: `queue_${shop.id}_${q.ticketId}`,
+                shopId: shop.id,
+                shopName: shop.name,
+                shopDepartment: shop.department,
+                time: "順番待ち",
+                timestamp: q.createdAt?.toMillis() || Date.now(),
+                status: q.status,
+                count: q.count || 1,
+                isQueue: true,
+                ticketId: q.ticketId,
+                peopleAhead: groupsAhead
+              });
+            }
+          });
+        }
+      });
+
+      newMyTickets.sort((a, b) => {
+        if (a.status === 'ready' && b.status !== 'ready') return -1;
+        if (a.status !== 'ready' && b.status === 'ready') return 1;
+        return b.timestamp - a.timestamp;
+      });
+
+      setMyTickets(newMyTickets);
+    });
+
+    return () => {
+        unsubUser();        
+        unsubAttractions(); 
+    };
+  }, []);
+
+  const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
+
+  // ★通知ループ処理
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      const hasReadyTicket = activeTickets.some(t => t.status === 'ready');
+      if (hasReadyTicket) {
+        if (enableSound) playBeep();
+        if (enableVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
+            try { navigator.vibrate(200); } catch(e) { /* ignore */ }
+        }
+      }
+    }, 1000); 
+
+    return () => clearInterval(intervalId);
+  }, [activeTickets, enableSound, enableVibrate]);
+
+
+  if (isBanned) {
+      return (
+          <div className="min-h-screen bg-red-900 text-white flex flex-col items-center justify-center p-4 text-center">
+              <h1 className="text-3xl font-bold mb-2">ACCESS DENIED</h1>
+              <p>利用停止処分が適用されています</p>
+          </div>
+      );
+  }
+
+  // --- 予約・発券ロジック ---
+
+  const handleSelectTime = (shop: Shop, time: string) => {
+    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
+    
+    const limitGroups = shop.capacity || 0; 
+    const current = shop.slots?.[time] || 0;
+    const remaining = limitGroups - current;
+
+    if (remaining <= 0) return alert("満席です。");
+    if (shop.isPaused) return alert("停止中です。");
+    
+    const maxPeople = shop.groupLimit || 10;
+
+    setPeopleCount(1);
+    setDraftBooking({ time, remaining, mode: "slot", maxPeople });
+  };
+
+  const handleJoinQueue = (shop: Shop) => {
+    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
+    if (shop.isPaused) return alert("停止中です。");
+
+    const maxPeople = shop.groupLimit || 10;
+
+    setPeopleCount(1);
+    setDraftBooking({ time: "順番待ち", remaining: 999, mode: "queue", maxPeople });
+  };
+
+  const handleConfirmBooking = async () => {
+    if (!selectedShop || !draftBooking) return;
+
+    if (!confirm(`${selectedShop.name}\n${draftBooking.mode === "queue" ? "並びますか？" : "予約しますか？"}\n人数: ${peopleCount}名`)) return;
+
+    try {
+      const timestamp = Date.now();
+      const shopRef = doc(db, "attractions", selectedShop.id);
+      
+      if (draftBooking.mode === "slot") {
+        const reservationData = { userId, time: draftBooking.time, timestamp, status: "reserved", count: peopleCount };
+        await updateDoc(shopRef, { 
+            [`slots.${draftBooking.time}`]: increment(1),
+            reservations: arrayUnion(reservationData)
+        });
+      } else {
+        const shopSnap = await getDoc(shopRef);
+        const currentQueue = shopSnap.data()?.queue || [];
+        let maxId = 0;
+        currentQueue.forEach((q: any) => {
+            const num = parseInt(q.ticketId || "0");
+            if (num > maxId) maxId = num;
+        });
+        const nextIdNum = maxId + 1;
+        const nextTicketId = String(nextIdNum).padStart(6, '0');
+
+        const queueData = {
+          userId,
+          ticketId: nextTicketId,
+          count: peopleCount,
+          status: "waiting",
+          createdAt: Timestamp.now()
+        };
+
+        await updateDoc(shopRef, {
+          queue: arrayUnion(queueData)
+        });
+
+        alert(`発券しました！\n番号: ${nextTicketId}`);
+      }
+      setDraftBooking(null);
+      setSelectedShop(null);
+    } catch (e) { 
+      console.error(e);
+      alert("エラーが発生しました。もう一度お試しください。"); 
+    }
+  };
+
+  const handleCancel = async (ticket: Ticket) => {
+    if (!confirm("キャンセルしますか？")) return;
+    try {
+      const shopRef = doc(db, "attractions", ticket.shopId);
+      const shopSnap = await getDoc(shopRef);
+      if (!shopSnap.exists()) return;
+      const shopData = shopSnap.data();
+
+      if (ticket.isQueue) {
+         const targetQ = shopData.queue?.find((q: any) => q.ticketId === ticket.ticketId);
+         if (targetQ) {
+           await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
+         }
+      } else {
+         const targetRes = shopData.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.timestamp === ticket.timestamp);
+         if (targetRes) {
+           await updateDoc(shopRef, { 
+             [`slots.${ticket.time}`]: increment(-1),
+             reservations: arrayRemove(targetRes)
+           });
+         }
+      }
+      alert("キャンセルしました");
+    } catch (e) { alert("キャンセル失敗"); }
+  };
+
+  // --- ★入場ロジック (共通処理) ---
+  const processEntry = async (ticket: Ticket, inputPass: string) => {
+    const shop = attractions.find(s => s.id === ticket.shopId);
+    if (!shop) return;
+    
+    // パスワード照合
+    if (inputPass !== shop.password) {
+        alert("パスワードが違います（QRコードが異なる可能性があります）");
+        return;
+    }
+
+    try {
+      const shopRef = doc(db, "attractions", shop.id);
+      
+      if (ticket.isQueue) {
+        const targetQ = shop.queue?.find((q: any) => q.ticketId === ticket.ticketId);
+        if(targetQ) await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
+      } else {
+        const oldRes = shop.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
+        if(oldRes) {
+            await updateDoc(shopRef, { reservations: arrayRemove(oldRes) });
+            await updateDoc(shopRef, { reservations: arrayUnion({ ...oldRes, status: "used" }) });
+        }
+      }
+      
+      alert(`「${shop.name}」に入場しました！`);
+      setQrTicket(null); // QRカメラを閉じる
+    } catch(e) {
+      console.error(e);
+      alert("エラーが発生しました。");
+    }
+  };
+
+  // ★手動入力での入場
+  const handleManualEnter = (ticket: Ticket) => {
+    const shop = attractions.find(s => s.id === ticket.shopId);
+    if (!shop) return;
+    if (ticket.isQueue && ticket.status !== 'ready') return alert("まだ呼び出しされていません。");
+
+    const inputPass = prompt(`${shop.name}のスタッフパスワードを入力：`);
+    if (inputPass === null) return; // キャンセル時
+    processEntry(ticket, inputPass);
+  };
+
+  // ★QRスキャン完了時の処理
+  const handleQrScan = (result: any) => {
+    if (result && qrTicket) {
+        const scannedPassword = result?.text || result;
+        processEntry(qrTicket, scannedPassword);
+    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6 flex flex-col gap-6">
-      <header className="flex justify-between items-center bg-white p-4 rounded shadow">
-        <h1 className="text-2xl font-bold text-gray-800">Admin 管理画面</h1>
-        <div className="text-sm text-gray-500">
-          モード: <span className="font-bold text-blue-600">オーダー制</span>
+    <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20 relative">
+      <header className="mb-6">
+        <div className="flex justify-between items-center mb-2">
+           <div className="flex items-center gap-2">
+               <h1 className="text-xl font-bold text-blue-900">予約・整理券</h1>
+           </div>
+           
+           <div className="flex items-center gap-2">
+               <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+                   {activeTickets.length}/3枚
+               </div>
+           </div>
         </div>
+        
+        <div className="bg-gray-800 text-white text-center py-1 rounded text-xs font-mono mb-2">
+            User ID: {userId}
+        </div>
+
+        {/* 通知設定パネル */}
+        <NotificationPanel 
+            enableSound={enableSound} setEnableSound={setEnableSound}
+            enableVibrate={enableVibrate} setEnableVibrate={setEnableVibrate}
+            onTestSound={handleTestSound}
+        />
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* 左カラム: 注文管理 (運営画面) */}
-        <section className="space-y-4">
-          <h2 className="text-xl font-bold text-gray-700">注文リスト ({orders.filter(o => o.status !== 'completed').length})</h2>
-          <div className="space-y-3">
-            {orders.map(order => {
-              // Module 2: お支払い強調機能 (スタイル定義)
-              const isPaying = order.status === 'paying';
-              const cardClass = isPaying 
-                ? "bg-red-600 text-white transform scale-105 shadow-2xl border-4 border-yellow-400 z-10" // 強調スタイル
-                : order.status === 'completed' ? "bg-gray-200 text-gray-400 opacity-60" : "bg-white text-gray-800";
+      {/* チケット一覧 */}
+      {activeTickets.length > 0 && (
+        <div className="mb-8 space-y-4">
+          <p className="text-blue-900 text-sm font-bold">🎟️ あなたのチケット</p>
+          {activeTickets.map((t) => (
+            <TicketCard 
+                key={t.uniqueKey} 
+                t={t} 
+                onManualEnter={handleManualEnter}
+                onCancel={handleCancel}
+                onOpenQr={setQrTicket}
+            />
+          ))}
+        </div>
+      )}
 
-              return (
-                <div key={order.id} className={`p-4 rounded-lg shadow transition-all ${cardClass}`}>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs font-mono opacity-80">{order.id.slice(0, 6)}...</span>
-                      <div className="text-2xl font-bold font-mono tracking-wider">No. {order.ticketId}</div>
-                    </div>
-                    <div className={`px-2 py-1 rounded text-xs font-bold ${isPaying ? "bg-white text-red-600" : "bg-gray-100 text-gray-600"}`}>
-                      {order.status === 'ordered' && "調理待ち"}
-                      {order.status === 'paying' && "★支払い待ち★"}
-                      {order.status === 'completed' && "完了"}
-                    </div>
-                  </div>
-                  
-                  <div className="mt-2 border-t border-white/20 pt-2">
-                    {order.items.map((item, i) => (
-                      <div key={i} className="flex justify-between text-sm font-bold">
-                        <span>{item.name} ×{item.count}</span>
-                      </div>
-                    ))}
-                    <div className="text-right text-xl font-bold mt-2">
-                      ¥{order.totalPrice}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+      {/* 店舗選択リスト または 詳細画面 */}
+      {!selectedShop ? (
+        <ShopList shops={attractions} onSelect={setSelectedShop} />
+      ) : (
+        <ShopDetail 
+            shop={selectedShop} 
+            activeTickets={activeTickets}
+            onBack={() => { setSelectedShop(null); setDraftBooking(null); }}
+            onSelectTime={handleSelectTime}
+            onJoinQueue={handleJoinQueue}
+        />
+      )}
+      
+      {/* 申し込み確認モーダル */}
+      {draftBooking && selectedShop && (
+        <BookingModal 
+            draftBooking={draftBooking}
+            shopName={selectedShop.name}
+            shopDepartment={selectedShop.department}
+            peopleCount={peopleCount}
+            setPeopleCount={setPeopleCount}
+            onCancel={() => setDraftBooking(null)}
+            onConfirm={handleConfirmBooking}
+        />
+      )}
 
-        {/* 右カラム: メニュー & 設定 */}
-        <section className="space-y-6">
-          
-          {/* メニュー登録 */}
-          <div className="bg-white p-4 rounded shadow">
-            <h2 className="text-lg font-bold mb-4">新規メニュー登録</h2>
-            <form onSubmit={addMenuItem} className="flex flex-col gap-3">
-              <input 
-                placeholder="品名" 
-                value={newItem.name} 
-                onChange={e => setNewItem({...newItem, name: e.target.value})}
-                className="border p-2 rounded" required
-              />
-              <div className="flex gap-2">
-                <input 
-                  type="number" placeholder="価格" 
-                  value={newItem.price || ""} 
-                  onChange={e => setNewItem({...newItem, price: Number(e.target.value)})}
-                  className="border p-2 rounded flex-1" required
-                />
-                <input 
-                  type="number" placeholder="在庫" 
-                  value={newItem.stock || ""} 
-                  onChange={e => setNewItem({...newItem, stock: Number(e.target.value)})}
-                  className="border p-2 rounded flex-1" required
-                />
-                <input 
-                  type="number" placeholder="制限数" 
-                  value={newItem.limit || ""} 
-                  onChange={e => setNewItem({...newItem, limit: Number(e.target.value)})}
-                  className="border p-2 rounded w-20" required
-                />
-              </div>
-              <button className="bg-blue-600 text-white py-2 rounded font-bold hover:bg-blue-700">登録</button>
-            </form>
-          </div>
+      {/* ★QRコードリーダー モーダル */}
+      {qrTicket && (
+          <QrModal onScan={handleQrScan} onClose={() => setQrTicket(null)} />
+      )}
 
-          {/* 在庫管理リスト */}
-          <div className="bg-white p-4 rounded shadow">
-            <h2 className="text-lg font-bold mb-4">在庫管理 (タップして修正)</h2>
-            <div className="space-y-2">
-              {menu.map(item => (
-                <div key={item.id} className="flex justify-between items-center p-2 border-b">
-                  <div>
-                    <div className="font-bold">{item.name}</div>
-                    <div className="text-xs text-gray-500">¥{item.price} / 限{item.limit}</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button 
-                      onClick={() => manualUpdateStock(item.id, item.stock)}
-                      className="bg-gray-100 hover:bg-gray-200 px-4 py-2 rounded text-lg font-bold min-w-[80px]"
-                    >
-                      {item.stock}
-                    </button>
-                    <button 
-                      onClick={() => deleteMenuItem(item.id)}
-                      className="text-red-500 hover:bg-red-50 px-2 py-2 rounded"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-        </section>
-      </div>
     </div>
   );
 }
