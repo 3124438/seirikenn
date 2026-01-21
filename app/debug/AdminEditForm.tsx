@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 
 // ★仕様書: 共通設定 (受取期限の分数)
 const LIMIT_TIME_MINUTES = 30;
@@ -18,14 +18,23 @@ const convertGoogleDriveLink = (url: string) => {
   }
 };
 
+// タイムスタンプ変換ヘルパー
+const getMillis = (createdAt: any): number => {
+  if (!createdAt) return Date.now();
+  if (typeof createdAt === 'number') return createdAt;
+  if (createdAt.toMillis) return createdAt.toMillis(); // Firestore Timestamp
+  if (createdAt instanceof Date) return createdAt.getTime();
+  return new Date(createdAt).getTime();
+};
+
 // ★追加: オーダー用型定義
 type AdminOrder = {
   id: string;
   ticketId: string;
   items: { name: string; count: number }[];
   totalAmount: number;
-  status: string;
-  createdAt: any; // Date | number | Firestore Timestamp
+  status: 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
+  createdAt: any;
 };
 
 type Props = {
@@ -62,6 +71,28 @@ export default function AdminEditForm(props: Props) {
     return () => clearInterval(timer);
   }, []);
 
+  // ★仕様書 Module 2: 表示・ソートロジックの実装
+  const sortedOrders = useMemo(() => {
+    if (!props.orders) return [];
+    
+    return [...props.orders].sort((a, b) => {
+      // 1. 最優先 (Status: paying)
+      if (a.status === 'paying' && b.status !== 'paying') return -1;
+      if (a.status !== 'paying' && b.status === 'paying') return 1;
+
+      const timeA = getMillis(a.createdAt);
+      const timeB = getMillis(b.createdAt);
+
+      // 2. 通常・警告 (Status: ordered) -> 古い順 (FIFO)
+      if (a.status === 'ordered' && b.status === 'ordered') {
+        return timeA - timeB;
+      }
+
+      // 3. その他 (completed/cancelled) -> 新しい順
+      return timeB - timeA;
+    });
+  }, [props.orders]);
+
   if (!props.isEditing) {
     return (
       <div className="bg-gray-800/50 rounded p-3 mb-4 border border-gray-700 text-center text-xs text-gray-500">
@@ -72,7 +103,7 @@ export default function AdminEditForm(props: Props) {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      {/* === 既存: 設定編集フォーム === */}
+      {/* === 既存: 設定編集フォーム (Module 1) === */}
       <div className="bg-gray-800 rounded-lg p-4 border border-blue-500 shadow-lg shadow-blue-900/20">
         <h3 className="text-sm font-bold mb-4 text-blue-300 flex items-center gap-2 border-b border-gray-700 pb-2">
           <span>✏️ 設定編集モード</span>
@@ -188,45 +219,56 @@ export default function AdminEditForm(props: Props) {
         </div>
       </div>
 
-      {/* === ★追加: Module 2 オーダー監視・強制キャンセル機能 === */}
-      {props.orders && props.orders.length > 0 && (
+      {/* === ★Module 2: オーダー監視・対応ダッシュボード === */}
+      {sortedOrders.length > 0 && (
         <div className="bg-gray-800 rounded-lg p-4 border border-orange-500 shadow-lg shadow-orange-900/20">
           <h3 className="text-sm font-bold mb-4 text-orange-300 flex items-center gap-2 border-b border-gray-700 pb-2">
             <span>🚨 オーダー監視・対応</span>
+            <span className="text-xs font-normal text-gray-500 ml-auto">Total: {sortedOrders.length}件</span>
           </h3>
           <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
-            {props.orders.map((order) => {
-              // 時間計算ロジック
-              const createdAtMs = typeof order.createdAt === 'number' 
-                  ? order.createdAt 
-                  : order.createdAt?.toMillis 
-                      ? order.createdAt.toMillis() 
-                      : new Date(order.createdAt).getTime();
-
+            {sortedOrders.map((order) => {
+              // 経過時間計算
+              const createdAtMs = getMillis(order.createdAt);
               const elapsedMinutes = Math.floor((now - createdAtMs) / (1000 * 60));
               const isOverdue = elapsedMinutes > LIMIT_TIME_MINUTES;
               const overdueMinutes = elapsedMinutes - LIMIT_TIME_MINUTES;
-              const isCancelled = order.status === 'canceled' || order.status === 'force_cancelled';
+              const isPaying = order.status === 'paying';
+              const isCompleted = order.status === 'completed';
+              const isCancelled = order.status === 'cancelled' || order.status === 'force_cancelled';
 
-              // 警告時のスタイル変更
-              const cardClass = isOverdue && !isCancelled && order.status !== 'completed'
-                  ? "border-red-500 bg-red-900/20" 
-                  : "border-gray-600 bg-gray-700";
+              // カードのスタイル分岐 (Paying > Overdue > Normal)
+              let cardClass = "border-gray-600 bg-gray-700";
+              let textClass = "text-gray-400";
+              let statusBadge = null;
 
-              const textClass = isOverdue && !isCancelled && order.status !== 'completed'
-                  ? "text-red-400" 
-                  : "text-gray-400";
+              if (isPaying) {
+                // 最優先: 支払い待ち (点滅や強調)
+                cardClass = "border-yellow-400 bg-yellow-900/30 animate-pulse-slow border-2";
+                textClass = "text-yellow-300";
+                statusBadge = <span className="bg-yellow-500 text-black text-[10px] px-1 rounded font-bold">会計待</span>;
+              } else if (isOverdue && !isCompleted && !isCancelled) {
+                // 警告: 遅延 (赤枠)
+                cardClass = "border-red-500 bg-red-900/20";
+                textClass = "text-red-400";
+                statusBadge = <span className="bg-red-600 text-white text-[10px] px-1 rounded font-bold">遅延</span>;
+              } else if (isCompleted) {
+                cardClass = "border-gray-700 bg-gray-800 opacity-60";
+              }
 
               return (
                 <div key={order.id} className={`border rounded p-3 flex flex-col ${cardClass}`}>
                   <div className="flex justify-between items-start mb-2">
-                    <span className="font-mono bg-gray-900 px-2 rounded text-white text-xs py-1">#{order.ticketId}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono bg-gray-900 px-2 rounded text-white text-xs py-1">#{order.ticketId}</span>
+                      {statusBadge}
+                    </div>
                     <span className="font-bold text-white">¥{order.totalAmount.toLocaleString()}</span>
                   </div>
                   
-                  {/* 警告表示 */}
+                  {/* 時間・警告表示 */}
                   <div className={`text-xs font-bold mb-2 ${textClass}`}>
-                    {isOverdue && !isCancelled && order.status !== 'completed' ? (
+                    {isOverdue && !isCompleted && !isCancelled ? (
                       <span className="flex items-center gap-1">
                         ⚠️ 経過: {elapsedMinutes}分 (+{overdueMinutes}分超過)
                       </span>
@@ -235,6 +277,7 @@ export default function AdminEditForm(props: Props) {
                     )}
                   </div>
 
+                  {/* 商品リスト */}
                   <div className="text-xs text-gray-300 mb-3 flex-1">
                     {order.items.map((item, i) => (
                       <div key={i} className="flex justify-between border-b border-gray-600/50 pb-1 mb-1">
@@ -244,18 +287,18 @@ export default function AdminEditForm(props: Props) {
                     ))}
                   </div>
 
-                  {/* 操作ボタン */}
+                  {/* 操作ボタン (Module 2 仕様) */}
                   <div className="flex gap-2 mt-auto">
-                    {order.status === 'ordered' || order.status === 'paying' ? (
+                    {(!isCompleted && !isCancelled) ? (
                       <>
-                         {/* 強制キャンセルボタン (仕様書 Module 2) */}
+                        {/* 強制キャンセル (在庫戻し) */}
                         <button
                           onClick={() => {
                             if(window.confirm("【重要】強制キャンセルしますか？\n在庫が元に戻ります。")) {
                               props.onForceCancel?.(order.id);
                             }
                           }}
-                          className={`flex-1 py-2 text-xs font-bold border rounded transition
+                          className={`flex-1 py-2 text-xs font-bold border rounded transition whitespace-nowrap
                             ${isOverdue 
                                 ? "bg-red-600 border-red-500 text-white hover:bg-red-700" 
                                 : "border-red-800 text-red-500 hover:bg-red-900/50"
@@ -264,18 +307,17 @@ export default function AdminEditForm(props: Props) {
                           {isOverdue ? "強制キャンセル (在庫戻し)" : "注文取消"}
                         </button>
                         
-                        {props.onPaymentComplete && (
-                          <button
-                            onClick={() => props.onPaymentComplete?.(order.id)}
-                            className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded"
-                          >
-                            支払い完了
-                          </button>
-                        )}
+                        {/* 支払い完了ボタン */}
+                        <button
+                          onClick={() => props.onPaymentComplete?.(order.id)}
+                          className="flex-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-2 rounded shadow-md whitespace-nowrap"
+                        >
+                          支払い完了
+                        </button>
                       </>
                     ) : (
-                      <div className="w-full text-center text-xs text-gray-500 py-2 bg-gray-800 rounded">
-                        {order.status === 'completed' ? "受渡完了" : "キャンセル済"}
+                      <div className="w-full text-center text-xs text-gray-500 py-2 bg-gray-800 rounded border border-gray-700">
+                        {isCompleted ? "受渡完了" : "キャンセル済"}
                       </div>
                     )}
                   </div>
