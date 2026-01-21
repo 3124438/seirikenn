@@ -1,8 +1,11 @@
 // ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAdminLogic, convertGoogleDriveLink } from "./logic";
 import { QueueListView, ReservationListView } from "./components";
+
+// ★仕様書共通設定: 受取期限（分）
+const LIMIT_TIME_MINUTES = 30;
 
 export default function SuperAdminPage() {
   const {
@@ -19,8 +22,16 @@ export default function SuperAdminPage() {
     handleBulkPause, handleBulkDeleteReservations, handleBulkDeleteVenues,
     resetForm, startEdit, handleSave, handleDeleteVenue,
     toggleReservationStatus, cancelReservation, updateQueueStatus,
+    handleOrderAction, // ★追加: logic.tsで実装済みの関数を受け取る
     targetShop
   } = useAdminLogic();
+
+  // ★追加: リアルタイム監視用（1分ごとに現在時刻を更新して遅延判定を再計算）
+  const [currentTime, setCurrentTime] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000); // 1分更新
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
@@ -240,9 +251,8 @@ export default function SuperAdminPage() {
                             </div>
                         )}
 
-                        {/* ★ ここから条件分岐：予約制 or 順番待ち制 */}
+                        {/* --- 予約/整理券リスト --- */}
                         {targetShop.isQueueMode ? (
-                            // --- 順番待ち制のUI ---
                             <div>
                                 <h3 className="text-lg font-bold mb-4 text-purple-400 border-b border-gray-700 pb-2">📋 待機列リスト (Queue)</h3>
                                 <QueueListView 
@@ -252,7 +262,6 @@ export default function SuperAdminPage() {
                                 />
                             </div>
                         ) : (
-                            // --- 予約制のUI ---
                             <div>
                                 <h3 className="text-lg font-bold mb-4 text-blue-400 border-b border-gray-700 pb-2">📅 予約リスト (Time Slots)</h3>
                                 <ReservationListView 
@@ -263,6 +272,94 @@ export default function SuperAdminPage() {
                                 />
                             </div>
                         )}
+
+                        {/* ★追加実装: オーダー管理セクション (Module 2) */}
+                        <div className="mt-8 border-t border-gray-700 pt-6">
+                            <h3 className="text-lg font-bold mb-4 text-green-400 flex items-center gap-2">
+                                🍔 モバイルオーダー管理 
+                                <span className="text-xs font-normal text-gray-400">(自動更新中...)</span>
+                            </h3>
+                            
+                            {(!targetShop.orders || targetShop.orders.filter((o:any) => !['completed', 'cancelled', 'force_cancelled'].includes(o.status)).length === 0) ? (
+                                <div className="text-center py-8 bg-gray-900/50 rounded-lg border border-dashed border-gray-700 text-gray-500">
+                                    現在、未処理のオーダーはありません。
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    {targetShop.orders
+                                        // 未完了のみ表示
+                                        .filter((o:any) => !['completed', 'cancelled', 'force_cancelled'].includes(o.status))
+                                        // 古い順にソート
+                                        .sort((a: any, b: any) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+                                        .map((order: any) => {
+                                            // 遅延判定ロジック
+                                            const createdAt = new Date(order.createdAt);
+                                            const elapsedMinutes = Math.floor((currentTime.getTime() - createdAt.getTime()) / (1000 * 60));
+                                            const isOverdue = elapsedMinutes > LIMIT_TIME_MINUTES;
+                                            const overdueMinutes = elapsedMinutes - LIMIT_TIME_MINUTES;
+
+                                            return (
+                                                <div key={order.id} className={`p-4 rounded-lg border-2 shadow-lg transition-all ${
+                                                    isOverdue 
+                                                        ? 'border-red-500 bg-red-900/20 animate-pulse-slow' // 警告スタイル
+                                                        : 'border-green-600 bg-gray-800'
+                                                }`}>
+                                                    <div className="flex flex-col md:flex-row justify-between md:items-start gap-4 mb-3">
+                                                         <div>
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className="font-mono font-bold text-lg text-yellow-400">#{order.id.slice(-4)}</span>
+                                                                <span className="text-xs bg-gray-700 px-2 py-1 rounded text-gray-300">{createdAt.toLocaleTimeString()} 注文</span>
+                                                            </div>
+                                                            <div className="text-xs text-gray-400">User: {order.userId}</div>
+                                                         </div>
+                                                         
+                                                         {/* 遅延警告表示 */}
+                                                         {isOverdue && (
+                                                             <div className="bg-red-600 text-white px-3 py-1 rounded font-bold text-sm flex items-center gap-2 shadow-md animate-bounce">
+                                                                 <span>⚠ 受取期限切れ</span>
+                                                                 <span className="text-xs bg-red-800 px-2 py-0.5 rounded">経過: {elapsedMinutes}分 (+{overdueMinutes}分)</span>
+                                                             </div>
+                                                         )}
+                                                    </div>
+
+                                                    {/* 商品リスト */}
+                                                    <ul className="bg-black/30 p-3 rounded mb-4 text-sm space-y-1">
+                                                        {order.items?.map((item:any, idx:number) => (
+                                                            <li key={idx} className="flex justify-between border-b border-gray-700/50 last:border-0 pb-1 last:pb-0">
+                                                                <span>{item.name}</span>
+                                                                <span className="font-bold">x {item.count}</span>
+                                                            </li>
+                                                        ))}
+                                                        <li className="pt-2 mt-1 border-t border-gray-600 text-right font-bold text-yellow-400">
+                                                            合計: ¥{order.totalAmount?.toLocaleString()}
+                                                        </li>
+                                                    </ul>
+
+                                                    {/* 操作ボタン */}
+                                                    <div className="flex gap-2 justify-end">
+                                                        {isOverdue && (
+                                                             <button 
+                                                                onClick={() => handleOrderAction(targetShop, order, 'force_cancel')} 
+                                                                className="bg-red-700 hover:bg-red-600 text-white px-4 py-3 rounded font-bold text-sm border border-red-500 shadow-lg flex-1 md:flex-none"
+                                                             >
+                                                                💣 強制キャンセル (在庫戻し)
+                                                             </button>
+                                                        )}
+                                                        <button 
+                                                            onClick={() => handleOrderAction(targetShop, order, 'payment')} 
+                                                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded font-bold text-sm shadow-lg flex-1 md:flex-none"
+                                                        >
+                                                            💰 支払い完了
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })
+                                    }
+                                </div>
+                            )}
+                        </div>
+
                     </div>
                 </div>
             </div>
