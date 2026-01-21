@@ -272,17 +272,27 @@ export const useAdminLogic = () => {
   };
 
   // --- ★追加実装: オーダー操作 (Module 2: Admin) ---
-  const handleOrderAction = async (shop: any, order: any, actionType: 'payment' | 'force_cancel') => {
-    const actionName = actionType === 'payment' ? "支払い完了" : "強制キャンセル";
-    if (!confirm(`${actionName}処理を行いますか？${actionType === 'force_cancel' ? '\n※遅延のため在庫は戻されます。' : ''}`)) return;
+  const handleOrderAction = async (shop: any, order: any, actionType: 'payment' | 'cancel' | 'force_cancel') => {
+    let msg = "";
+    if (actionType === 'payment') msg = "支払い完了処理を行いますか？";
+    if (actionType === 'cancel') msg = "この注文をキャンセルしますか？\n（在庫は戻されます）";
+    if (actionType === 'force_cancel') msg = "【強制キャンセル】\n期限切れのためキャンセル処理を行いますか？\n（在庫は戻されます）";
+
+    if (!confirm(msg)) return;
 
     try {
         // 1. オーダー配列のステータス更新
+        // Module 2 仕様: ステータス遷移ロジック
         const updatedOrders = shop.orders?.map((o: any) => {
             if (o.id === order.id) {
+                let nextStatus = 'ordered';
+                if (actionType === 'payment') nextStatus = 'completed';
+                if (actionType === 'cancel') nextStatus = 'cancelled';
+                if (actionType === 'force_cancel') nextStatus = 'force_cancelled';
+
                 return {
                     ...o,
-                    status: actionType === 'payment' ? 'completed' : 'force_cancelled', // force_cancelled status
+                    status: nextStatus,
                     updatedAt: new Date().toISOString()
                 };
             }
@@ -291,12 +301,14 @@ export const useAdminLogic = () => {
 
         const updateData: any = { orders: updatedOrders };
 
-        // 2. 強制キャンセルの場合、在庫を復元 (Atomic Increment)
-        if (actionType === 'force_cancel' && order.items) {
+        // 2. キャンセル・強制キャンセルの場合、在庫を復元 (Atomic Increment)
+        // Module 2 仕様: cancelOrder, forceCancelOrder の在庫復元処理
+        if ((actionType === 'cancel' || actionType === 'force_cancel') && order.items) {
             order.items.forEach((item: any) => {
                 if (item.id) {
                     // Firestoreのドット記法で特定の在庫フィールドをアトミックに加算
                     // 例: "stock.item_abc": increment(2)
+                    // 注: ここではDB構造が shop ドキュメント内に stock マップを持つと仮定
                     updateData[`stock.${item.id}`] = increment(item.count);
                 }
             });
@@ -306,7 +318,7 @@ export const useAdminLogic = () => {
 
     } catch (e) {
         console.error("Order Action Error:", e);
-        alert(`${actionName}に失敗しました。`);
+        alert(`処理に失敗しました。`);
     }
   };
 
