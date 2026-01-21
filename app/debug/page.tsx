@@ -2,7 +2,7 @@
 "use client";
 import { useState, useEffect } from "react";
 // 階層に合わせてパスを調整
-import { db, auth } from "../../firebase"; 
+import { db, auth } from "../../firebase";
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
@@ -10,6 +10,9 @@ import { signInAnonymously } from "firebase/auth";
 import AdminEditForm from "./AdminEditForm";
 import ShopList from "./ShopList";
 import ShopDetail from "./ShopDetail";
+
+// ■共通設定 (Module 2: Constants)
+const LIMIT_TIME_MINUTES = 30;
 
 export default function AdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
@@ -64,7 +67,7 @@ export default function AdminPage() {
     setMyUserId(stored);
     // ------------------------------------------
 
-    // 1. 会場データの監視
+    // 1. 会場データの監視 (Module 2: subscribeToOrders相当を含む)
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
@@ -103,22 +106,17 @@ export default function AdminPage() {
   }
 
   // --- 権限チェックヘルパー関数 ---
-  
-  // 1. ブラックリスト判定 (trueならBANされている)
   const isUserBlacklisted = (shop: any) => {
       return shop?.adminBannedUsers?.includes(myUserId);
   };
 
-  // 2. ホワイトリスト判定 (trueなら許可されていない)
   const isUserNotWhitelisted = (shop: any) => {
-      // ホワイトリストモード(isRestricted)かつ、許可リスト(allowedUsers)に含まれていない場合
       if (shop.isRestricted) {
           return !shop.allowedUsers?.includes(myUserId);
       }
       return false;
   };
 
-  // 3. 管理者限定モード判定 (trueなら許可されていない)
   const isAdminRestrictedAndNotAllowed = (shop: any) => {
       if (shop.isAdminRestricted) {
           return !shop.adminAllowedUsers?.includes(myUserId);
@@ -131,7 +129,6 @@ export default function AdminPage() {
       const shop = attractions.find(s => s.id === shopId);
       if (!shop) return;
 
-      // --- 入室不可チェック ---
       if (isUserBlacklisted(shop)) {
           alert(`⛔ アクセス拒否\nあなたのIDは、この会場のブラックリストに含まれているため操作できません。`);
           return;
@@ -146,9 +143,7 @@ export default function AdminPage() {
           alert(`🔒 管理者制限\nこの会場は「指名スタッフ限定モード」です。\nアクセス権限がありません。`);
           return;
       }
-      // ----------------------
 
-      // パスワード認証 (入室前に必ず確認)
       const inputPass = prompt(`「${shop.name}」の管理用パスワードを入力してください`);
       if (inputPass !== shop.password) {
           alert("パスワードが違います");
@@ -158,17 +153,16 @@ export default function AdminPage() {
       setExpandedShopId(shopId);
   };
 
-  // --- 編集関連 ---
+  // --- 編集関連 (Module 1: Admin 設定) ---
   const resetForm = () => {
     setIsEditing(false);
     setManualId(""); setNewName(""); setDepartment(""); setImageUrl(""); setDescription(""); setPassword("");
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
-    setIsQueueMode(false); // 初期化
+    setIsQueueMode(false);
   };
 
   const startEdit = (shop: any) => {
-    // 編集時も権限チェック
     if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
     setIsEditing(true);
@@ -184,7 +178,7 @@ export default function AdminPage() {
     setDuration(shop.duration);
     setCapacity(shop.capacity); 
     setIsPaused(shop.isPaused || false);
-    setIsQueueMode(shop.isQueueMode || false); // モード読み込み
+    setIsQueueMode(shop.isQueueMode || false); 
     
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -194,7 +188,6 @@ export default function AdminPage() {
 
     const currentShop = attractions.find(s => s.id === manualId);
     
-    // 保存時も権限チェック
     if (currentShop && (isUserBlacklisted(currentShop) || isUserNotWhitelisted(currentShop))) {
         return alert("権限がないため保存できません。");
     }
@@ -225,7 +218,6 @@ export default function AdminPage() {
             }
         }
     } else {
-        // 順番待ちモードならスロットは既存維持か空にする（ここでは既存維持しつつモード優先）
         slots = currentShop?.slots || {}; 
     }
 
@@ -236,8 +228,8 @@ export default function AdminPage() {
       description, 
       password, groupLimit,
       openTime, closeTime, duration, capacity, isPaused,
-      isQueueMode, // ★保存
-      slots // 予約制の場合は更新されたslots
+      isQueueMode,
+      slots
     };
 
     await setDoc(doc(db, "attractions", manualId), data, { merge: true });
@@ -297,12 +289,10 @@ export default function AdminPage() {
       let updatedQueue = [];
 
       if (action === "call") {
-          // ステータスを更新して維持
           updatedQueue = currentQueue.map((t: any) => 
               t.ticketId === ticket.ticketId ? { ...t, status: "ready" } : t
           );
       } else {
-          // enter (強制入場) または cancel (強制取消) はリストから削除
           updatedQueue = currentQueue.filter((t: any) => t.ticketId !== ticket.ticketId);
       }
 
@@ -311,43 +301,44 @@ export default function AdminPage() {
       });
   };
 
-  // --- ★追加: オーダー操作関連 (Module 2: Admin) ---
-  const handleOrderAction = async (shop: any, order: any, action: "payment" | "force_cancel") => {
+  // --- ★追加・修正: オーダー操作関連 (Module 2: Admin [Real-time Monitoring]) ---
+  // 仕様書にある cancelOrder, forceCancelOrder, completePayment をここに集約
+  const handleOrderAction = async (shop: any, order: any, action: "payment" | "cancel" | "force_cancel") => {
       if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
+      let confirmMsg = "";
+      if (action === "payment") confirmMsg = `注文ID: ${order.ticketId}\n支払いを完了し、商品を受渡済みにしますか？`;
+      if (action === "cancel") confirmMsg = `注文ID: ${order.ticketId}\nこの注文をキャンセルしますか？\n（在庫は自動的に戻ります）`;
+      if (action === "force_cancel") confirmMsg = `注文ID: ${order.ticketId}\n【期限切れ強制キャンセル】\n実行しますか？\n（在庫は自動的に戻ります）`;
+
+      if (!confirm(confirmMsg)) return;
+
       const currentOrders = shop.orders || [];
-      // ショップの商品リスト（在庫情報を含む）を取得
       const currentItems = shop.items || [];
       let updatedOrders = [];
       let updatedItems = [...currentItems];
 
-      if (action === "payment") {
-          // 支払い完了処理: ステータスをcompletedにする
-          updatedOrders = currentOrders.map((o: any) => 
-              o.id === order.id ? { ...o, status: "completed" } : o
-          );
+      // 1. ステータス更新ロジック
+      let newStatus = order.status;
+      if (action === "payment") newStatus = "completed";
+      else if (action === "cancel") newStatus = "cancelled";
+      else if (action === "force_cancel") newStatus = "force_cancelled";
 
-          await updateDoc(doc(db, "attractions", shop.id), {
-              orders: updatedOrders
-          });
+      updatedOrders = currentOrders.map((o: any) => 
+          o.id === order.id ? { ...o, status: newStatus } : o
+      );
 
-      } else if (action === "force_cancel") {
-          // 強制キャンセル処理
-          // 1. オーダーのステータスを force_cancelled に変更
-          updatedOrders = currentOrders.map((o: any) => 
-              o.id === order.id ? { ...o, status: "force_cancelled" } : o
-          );
-
-          // 2. 在庫の復元 (Atomic Incrementの代わりに配列全体を更新)
+      // 2. 在庫復元処理 (キャンセル or 強制キャンセルの場合)
+      if (action === "cancel" || action === "force_cancel") {
           if (order.items && Array.isArray(order.items)) {
               order.items.forEach((orderedItem: any) => {
-                  // IDが一致、なければ名前が一致する商品を探す
+                  // DB上の商品リストから、IDまたは名前で対象商品を検索
                   const shopItemIndex = updatedItems.findIndex((i: any) => 
                       (i.id && i.id === orderedItem.id) || i.name === orderedItem.name
                   );
                   
                   if (shopItemIndex > -1) {
-                      // 在庫を加算して戻す
+                      // Atomic Increment (配列更新によるシミュレーション)
                       const currentStock = updatedItems[shopItemIndex].stock || 0;
                       updatedItems[shopItemIndex] = {
                           ...updatedItems[shopItemIndex],
@@ -356,12 +347,18 @@ export default function AdminPage() {
                   }
               });
           }
+      }
 
-          // Firestore更新 (ordersとitemsを同時に更新)
+      // 3. Firestore更新
+      // menu collection (items) と orders collection (orders) を同時に更新
+      try {
           await updateDoc(doc(db, "attractions", shop.id), {
               orders: updatedOrders,
               items: updatedItems
           });
+      } catch (e) {
+          console.error("Order update failed:", e);
+          alert("更新に失敗しました。通信環境を確認してください。");
       }
   };
 
@@ -447,7 +444,7 @@ export default function AdminPage() {
               toggleReservationStatus={toggleReservationStatus}
               cancelReservation={cancelReservation}
               handleQueueAction={handleQueueAction}
-              // ★追加: オーダー操作用関数を渡す
+              // ★ Module 2: 統合されたオーダー操作関数
               handleOrderAction={handleOrderAction}
             />
         )}
