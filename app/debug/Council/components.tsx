@@ -1,4 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
+
+// ★仕様書: 共通設定
+const LIMIT_TIME_MINUTES = 30;
 
 // キューリスト取得ヘルパー
 const getQueueList = (shop: any) => {
@@ -23,6 +26,114 @@ const getReservationsByTime = (shop: any) => {
 };
 
 // --- コンポーネント定義 ---
+
+// ★追加: オーダー監視・管理リスト (Module 2 Implementation)
+export const OrderListView = ({ shop, searchUserId, onOrderAction }: any) => {
+    // リアルタイム監視用タイマー
+    const [now, setNow] = useState(Date.now());
+
+    useEffect(() => {
+        const timer = setInterval(() => setNow(Date.now()), 60000); // 1分ごとに更新
+        return () => clearInterval(timer);
+    }, []);
+
+    // アクティブなオーダー（未完了）のみを抽出してソート（古い順）
+    const activeOrders = shop.orders?.filter((o: any) => ['ordered', 'paying'].includes(o.status)) || [];
+    activeOrders.sort((a: any, b: any) => {
+        const tA = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt).getTime();
+        const tB = b.createdAt?.toMillis ? b.createdAt.toMillis() : new Date(b.createdAt).getTime();
+        return tA - tB;
+    });
+
+    if (activeOrders.length === 0) return <div className="text-center py-8 text-gray-500 bg-gray-900/50 rounded-lg">現在進行中のオーダーはありません。</div>;
+
+    return (
+        <div className="space-y-4">
+            {activeOrders.map((order: any) => {
+                // 経過時間計算
+                const createdAtMs = order.createdAt?.toMillis ? order.createdAt.toMillis() : new Date(order.createdAt).getTime();
+                const elapsedMinutes = Math.floor((now - createdAtMs) / (1000 * 60));
+                
+                // ★仕様書: 警告判定 (LIMIT_TIME_MINUTES 超過)
+                const isOverdue = elapsedMinutes > LIMIT_TIME_MINUTES;
+                const overdueMinutes = Math.max(0, elapsedMinutes - LIMIT_TIME_MINUTES);
+
+                // 検索ハイライト
+                const isMatch = searchUserId && order.userId?.includes(searchUserId.toUpperCase());
+
+                return (
+                    <div 
+                        key={order.id} 
+                        className={`p-4 rounded-lg border transition-all
+                            ${isOverdue 
+                                ? 'bg-red-900/20 border-red-500 shadow-[0_0_10px_rgba(220,38,38,0.3)]' // 警告表示
+                                : 'bg-gray-800 border-gray-600'}
+                            ${isMatch ? 'ring-2 ring-pink-500' : ''}
+                        `}
+                    >
+                        <div className="flex justify-between items-start mb-3">
+                            <div>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-mono font-bold text-lg text-white">Order ID: {order.id.slice(0, 8)}</span>
+                                    {order.status === 'paying' && <span className="bg-yellow-600 text-white text-xs px-2 py-0.5 rounded animate-pulse">支払中</span>}
+                                </div>
+                                <div className="text-sm text-gray-300">
+                                    User: <span className="font-mono">{order.userId}</span>
+                                </div>
+                            </div>
+                            
+                            {/* 経過時間表示 */}
+                            <div className="text-right">
+                                <div className={`font-mono text-xl font-bold ${isOverdue ? 'text-red-400' : 'text-gray-400'}`}>
+                                    経過: {elapsedMinutes}分
+                                </div>
+                                {isOverdue && (
+                                    <div className="text-xs text-red-400 font-bold animate-pulse">
+                                        (+{overdueMinutes}分 超過)
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 商品リスト */}
+                        <div className="bg-gray-900/50 rounded p-2 mb-3 text-sm text-gray-300">
+                            {order.items?.map((item: any, idx: number) => (
+                                <div key={idx} className="flex justify-between border-b border-gray-700 last:border-0 py-1">
+                                    <span>{item.name}</span>
+                                    <span className="font-mono">x{item.count}</span>
+                                </div>
+                            ))}
+                            <div className="flex justify-between mt-2 pt-1 border-t border-gray-600 font-bold text-white">
+                                <span>Total</span>
+                                <span>¥{order.totalAmount?.toLocaleString()}</span>
+                            </div>
+                        </div>
+
+                        {/* アクションボタン */}
+                        <div className="flex gap-3 justify-end items-center">
+                            {/* ★仕様書: 強制キャンセルボタン (遅延時に目立つように表示) */}
+                            {isOverdue && (
+                                <button 
+                                    onClick={() => onOrderAction(shop, order, 'force_cancel')}
+                                    className="bg-red-600 hover:bg-red-700 text-white text-xs font-bold py-2 px-4 rounded border border-red-400 shadow-lg flex items-center gap-1"
+                                >
+                                    ⚠️ 強制キャンセル (在庫戻し)
+                                </button>
+                            )}
+
+                            <button 
+                                onClick={() => onOrderAction(shop, order, 'payment')} 
+                                className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded shadow-lg"
+                            >
+                                支払い完了
+                            </button>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
 
 export const QueueListView = ({ shop, searchUserId, onUpdateStatus }: any) => {
     const { active } = getQueueList(shop);
