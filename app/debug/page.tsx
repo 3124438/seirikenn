@@ -28,7 +28,7 @@ export default function AdminPage() {
   const [manualId, setManualId] = useState("");
   const [newName, setNewName] = useState("");
   const [department, setDepartment] = useState(""); 
-  const [imageUrl, setImageUrl] = useState("");     
+  const [imageUrl, setImageUrl] = useState("");      
   const [description, setDescription] = useState(""); // 会場説明文
   const [password, setPassword] = useState("");
   
@@ -282,7 +282,7 @@ export default function AdminPage() {
       });
   };
 
-  // --- ★追加: 順番待ち操作関連 (Queue System) ---
+  // --- 順番待ち操作関連 (Queue System) ---
   const handleQueueAction = async (shop: any, ticket: any, action: "call" | "enter" | "cancel") => {
       if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
 
@@ -309,6 +309,60 @@ export default function AdminPage() {
       await updateDoc(doc(db, "attractions", shop.id), {
           queue: updatedQueue
       });
+  };
+
+  // --- ★追加: オーダー操作関連 (Module 2: Admin) ---
+  const handleOrderAction = async (shop: any, order: any, action: "payment" | "force_cancel") => {
+      if (isUserBlacklisted(shop) || isUserNotWhitelisted(shop)) return;
+
+      const currentOrders = shop.orders || [];
+      // ショップの商品リスト（在庫情報を含む）を取得
+      const currentItems = shop.items || [];
+      let updatedOrders = [];
+      let updatedItems = [...currentItems];
+
+      if (action === "payment") {
+          // 支払い完了処理: ステータスをcompletedにする
+          updatedOrders = currentOrders.map((o: any) => 
+              o.id === order.id ? { ...o, status: "completed" } : o
+          );
+
+          await updateDoc(doc(db, "attractions", shop.id), {
+              orders: updatedOrders
+          });
+
+      } else if (action === "force_cancel") {
+          // 強制キャンセル処理
+          // 1. オーダーのステータスを force_cancelled に変更
+          updatedOrders = currentOrders.map((o: any) => 
+              o.id === order.id ? { ...o, status: "force_cancelled" } : o
+          );
+
+          // 2. 在庫の復元 (Atomic Incrementの代わりに配列全体を更新)
+          if (order.items && Array.isArray(order.items)) {
+              order.items.forEach((orderedItem: any) => {
+                  // IDが一致、なければ名前が一致する商品を探す
+                  const shopItemIndex = updatedItems.findIndex((i: any) => 
+                      (i.id && i.id === orderedItem.id) || i.name === orderedItem.name
+                  );
+                  
+                  if (shopItemIndex > -1) {
+                      // 在庫を加算して戻す
+                      const currentStock = updatedItems[shopItemIndex].stock || 0;
+                      updatedItems[shopItemIndex] = {
+                          ...updatedItems[shopItemIndex],
+                          stock: Number(currentStock) + Number(orderedItem.count || 0)
+                      };
+                  }
+              });
+          }
+
+          // Firestore更新 (ordersとitemsを同時に更新)
+          await updateDoc(doc(db, "attractions", shop.id), {
+              orders: updatedOrders,
+              items: updatedItems
+          });
+      }
   };
 
   // --- 表示用ヘルパー ---
@@ -393,6 +447,8 @@ export default function AdminPage() {
               toggleReservationStatus={toggleReservationStatus}
               cancelReservation={cancelReservation}
               handleQueueAction={handleQueueAction}
+              // ★追加: オーダー操作用関数を渡す
+              handleOrderAction={handleOrderAction}
             />
         )}
       </div>
