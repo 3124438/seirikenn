@@ -1,14 +1,13 @@
 // app/components.tsx
 "use client";
-import React, { useState, useEffect } from "react"; // useState, useEffectを追加
+import React, { useState, useEffect } from "react";
 import { QrReader } from 'react-qr-reader';
 import { Ticket, Shop, DraftBooking } from "./types";
 
-// ★追加：共通設定
+// 共通設定 (Constants)
 const LIMIT_TIME_MINUTES = 30;
 
 // --- サブコンポーネント: 通知設定パネル ---
-// (変更なし)
 export const NotificationPanel = ({
   enableSound, setEnableSound,
   enableVibrate, setEnableVibrate,
@@ -45,27 +44,32 @@ export const NotificationPanel = ({
 
 // --- サブコンポーネント: チケットカード ---
 export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket, onManualEnter: (t: Ticket) => void, onCancel: (t: Ticket) => void, onOpenQr: (t: Ticket) => void }) => {
-  const isReady = t.status === 'ready';
-  const isOrder = t.isOrder; // オーダーかどうか判定
+  const isReady = t.status === 'ready'; // 呼び出し中（整理券）
+  const isOrder = t.isOrder; // オーダーシステムかどうか
+  const isPaying = t.status === 'paying'; // 支払い画面提示中
+  const isForceCancelled = t.status === 'force_cancelled'; // 強制キャンセル
+  const isCompleted = t.status === 'completed'; // 完了
 
-  // ★追加: カウントダウン用ステート
+  // カウントダウン用ステート
   const [timeLeftStr, setTimeLeftStr] = useState("");
   const [isExpired, setIsExpired] = useState(false);
 
   useEffect(() => {
     // 注文以外、または完了/キャンセル済みならタイマー不要
-    if (!isOrder || t.status === 'completed' || t.status === 'canceled' || t.status === 'force_cancelled') return;
+    if (!isOrder || isCompleted || t.status === 'cancelled' || isForceCancelled) return;
 
     const interval = setInterval(() => {
         const now = Date.now();
+        // createdAtが存在しない場合はtimestampを使用
+        const startTime = t.createdAt ? t.createdAt.toMillis() : t.timestamp;
         const limitMs = LIMIT_TIME_MINUTES * 60 * 1000;
-        const passed = now - t.timestamp; // Ticket作成時のtimestampを使用
+        const passed = now - startTime;
         const remain = limitMs - passed;
 
         if (remain <= 0) {
             setIsExpired(true);
             setTimeLeftStr("00:00");
-            clearInterval(interval);
+            clearInterval(interval); // 期限切れでも表示は00:00固定
         } else {
             const m = Math.floor(remain / 60000);
             const s = Math.floor((remain % 60000) / 1000);
@@ -74,24 +78,61 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [t, isOrder]);
+  }, [t, isOrder, isCompleted, isForceCancelled]);
 
+  // --- 1. 支払い提示モード (Module 4: UI提示画面) ---
+  if (isPaying) {
+    return (
+      <div className="bg-yellow-400 border-4 border-yellow-600 rounded-xl p-6 shadow-2xl relative text-center text-gray-900 overflow-hidden">
+        <div className="animate-pulse absolute inset-0 bg-yellow-300 opacity-20 pointer-events-none"></div>
+        <p className="text-sm font-bold mb-4 bg-yellow-600 text-white py-1 px-3 rounded-full inline-block">
+          スタッフにこの画面を見せてください
+        </p>
+        
+        <div className="bg-white/90 p-6 rounded-lg shadow-inner mb-6">
+           <p className="text-sm font-bold text-gray-500 mb-1">お支払い金額</p>
+           <p className="text-5xl font-black tracking-tight mb-2">
+             ¥{t.totalPrice?.toLocaleString()}
+           </p>
+        </div>
+
+        <div className="mb-8">
+           <p className="text-sm font-bold text-yellow-800 mb-1">チケット番号</p>
+           <p className="text-4xl font-mono font-bold tracking-widest bg-yellow-100/50 rounded p-2 inline-block border-2 border-yellow-600 border-dashed">
+             {t.ticketId}
+           </p>
+        </div>
+
+        {/* 誤操作防止用の小さな戻るボタン */}
+        <button 
+          onClick={() => onManualEnter(t)} // トグルで戻る想定
+          className="text-xs text-yellow-800 underline opacity-70 hover:opacity-100"
+        >
+          ← 注文画面に戻る
+        </button>
+      </div>
+    );
+  }
+
+  // --- 2. 通常・呼び出し・強制キャンセル・完了モード ---
+  
   // クラス定義
   let cardClass = "bg-white border-l-4 border-green-500 shadow-lg";
   
-  // ★変更: スタイル分岐（強制キャンセル > 期限切れ > 呼び出し中 > 通常）
-  if (t.status === 'force_cancelled') {
-      cardClass = "bg-gray-100 border-l-4 border-gray-400 shadow-md opacity-70 grayscale";
-  } else if (isOrder && isExpired) {
-      cardClass = "bg-red-50 border-l-4 border-red-500 shadow-lg";
+  if (isForceCancelled) {
+      cardClass = "bg-gray-100 border-l-4 border-gray-400 shadow-none opacity-80 grayscale";
+  } else if (isOrder) {
+      if (isExpired) {
+        cardClass = "bg-red-50 border-l-4 border-red-600 shadow-lg ring-1 ring-red-200";
+      } else {
+        cardClass = "bg-amber-50 border-l-4 border-amber-500 shadow-lg";
+      }
   } else if (isReady) {
       cardClass = "bg-red-50 border-l-4 border-red-500 shadow-xl ring-2 ring-red-400 animate-pulse-slow";
-  } else if (isOrder) {
-      cardClass = "bg-yellow-50 border-l-4 border-yellow-500 shadow-lg";
   }
 
   return (
-    <div className={`${cardClass} p-4 rounded relative`}>
+    <div className={`${cardClass} p-4 rounded relative transition-all duration-300`}>
       <div className="flex justify-between items-start mb-3">
         <div className="w-full">
           {t.shopDepartment && (
@@ -106,40 +147,45 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
             )}
           </h2>
 
-          {/* ★追加: 強制キャンセル時の表示 */}
-          {t.status === 'force_cancelled' && (
-              <div className="mt-2 bg-gray-600 text-white text-sm font-bold p-2 rounded text-center">
-                  期限切れのためキャンセルされました
+          {/* 強制キャンセル表示 */}
+          {isForceCancelled && (
+              <div className="mt-3 bg-gray-600 text-white text-sm font-bold p-3 rounded text-center">
+                  🚫 期限切れのため<br/>キャンセルされました
               </div>
           )}
           
-          {isOrder ? (
-            /* --- オーダー表示エリア --- */
+          {isOrder && !isForceCancelled && !isCompleted ? (
+            /* --- オーダー中表示エリア --- */
             <div className="mt-2 w-full">
-                 {/* ★追加: カウントダウンタイマー */}
-                 {t.status !== 'completed' && t.status !== 'force_cancelled' && (
-                    <div className={`mb-2 text-sm font-bold flex justify-between items-center ${isExpired ? "text-red-600" : "text-orange-600"}`}>
-                        <span>受取期限まで:</span>
-                        <span className="font-mono text-lg">{timeLeftStr}</span>
-                    </div>
-                )}
-                {/* ★追加: 期限切れ警告 */}
-                {isExpired && t.status !== 'completed' && t.status !== 'force_cancelled' && (
-                    <p className="text-xs text-red-600 font-bold mb-2 bg-red-100 p-2 rounded border border-red-200">
-                        ⚠️ お受け取り期限を過ぎています。<br/>スタッフに状況をお伝えください。<br/>(在庫が確保されていない可能性があります)
+                 {/* カウントダウンタイマー */}
+                 <div className={`mb-3 flex justify-between items-center p-2 rounded ${isExpired ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>
+                    <span className="text-xs font-bold">受取期限まで</span>
+                    <span className={`font-mono font-bold text-xl ${isExpired ? "animate-pulse" : ""}`}>
+                      {timeLeftStr}
+                    </span>
+                 </div>
+
+                {/* 期限切れ警告 (Module 4) */}
+                {isExpired && (
+                    <p className="text-xs text-red-600 font-bold mb-3 border-2 border-red-200 bg-white p-2 rounded">
+                        ⚠️ お受け取り期限を過ぎています。<br/>
+                        スタッフに状況をお伝えください。<br/>
+                        <span className="text-[10px] font-normal">(在庫が確保されていない可能性があります)</span>
                     </p>
                 )}
 
                 {/* 金額・ID表示 */}
                 <div className="flex justify-between items-end border-b border-gray-200 pb-2 mb-2">
-                    <span className="font-bold text-gray-600">合計</span>
+                    <span className="font-bold text-gray-600 text-sm">合計</span>
                     <span className="text-2xl font-bold text-gray-900">¥{t.totalPrice?.toLocaleString()}</span>
                 </div>
-                 <div className="mt-1 bg-yellow-100 text-yellow-800 text-xs font-bold px-2 py-1 rounded inline-block">
-                    Order No: {t.ticketId}
-                </div>
+                 <div className="mt-1 flex items-center gap-2">
+                    <span className="bg-gray-200 text-gray-700 text-xs font-bold px-2 py-1 rounded">
+                      ID: {t.ticketId}
+                    </span>
+                 </div>
             </div>
-          ) : (
+          ) : !isOrder && !isForceCancelled ? (
             /* --- 整理券/予約表示エリア --- */
             <>
               {t.isQueue ? (
@@ -165,7 +211,7 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
                   </div>
               )}
             </>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -174,31 +220,31 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
           {/* 手動入力/お支払いへボタン */}
           <button 
               onClick={() => onManualEnter(t)} 
-              disabled={(t.isQueue && !isReady) || t.status === 'force_cancelled'} 
-              className={`flex-1 font-bold py-3 rounded-lg shadow transition text-sm
-              ${((t.isQueue && !isReady) || t.status === 'force_cancelled')
+              disabled={(t.isQueue && !isReady) || isForceCancelled || isCompleted} 
+              className={`flex-1 font-bold py-3 rounded-lg shadow transition text-sm flex items-center justify-center gap-2
+              ${((t.isQueue && !isReady) || isForceCancelled || isCompleted)
                   ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
                   : isOrder 
-                      ? "bg-yellow-500 text-white hover:bg-yellow-600" // オーダー時は黄色
+                      ? "bg-amber-500 text-white hover:bg-amber-600 shadow-md transform active:scale-95" // オーダー時はオレンジ/黄色
                       : "bg-blue-600 text-white hover:bg-blue-500"
               }`}
           >
               {isOrder 
-                  ? "💴 お支払い画面へ" 
+                  ? <><span>💴</span> お支払いへ進む</>
                   : (t.isQueue && !isReady) ? "待機中..." : "パスワード入力で入場"
               }
           </button>
           
           {/* キャンセルボタン (完了や強制キャンセル以外で表示) */}
-          {t.status !== 'completed' && t.status !== 'force_cancelled' && (
-              <button onClick={() => onCancel(t)} className="px-4 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50">
+          {!isCompleted && !isForceCancelled && (
+              <button onClick={() => onCancel(t)} className="px-3 text-red-500 border border-red-200 rounded-lg text-xs hover:bg-red-50 whitespace-nowrap">
                   削除
               </button>
           )}
         </div>
 
         {/* QRコードで入場ボタン (整理券のみ) */}
-        {!isOrder && t.status !== 'force_cancelled' && (
+        {!isOrder && !isForceCancelled && !isCompleted && (
             <button 
               onClick={() => onOpenQr(t)}
               disabled={t.isQueue && !isReady}
