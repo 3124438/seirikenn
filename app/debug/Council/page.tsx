@@ -1,177 +1,259 @@
+// app/debug/Council/page.tsx
+"use client"; // ★必須: これを追加することでReactフックが使用可能になります
+
 import React, { useState, useEffect } from 'react';
 
-// ==========================================
-// 2. 共通設定 (Constants)
-// ==========================================
-const LIMIT_TIME_MINUTES = 30; // 受取期限の分数
+// --- 定数定義 (仕様書 Section 2) ---
+const LIMIT_TIME_MINUTES = 30;
 
-// 注文データの型定義（仕様書 DB設計に基づく）
-type Order = {
-  orderId: string;
-  ticketId: string;
-  cartItems: any[]; // 商品リスト
-  totalAmount: number;
-  status: 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
-  createdAt: string; // ISO String想定
-};
+// --- 型定義 (仕様書 Section 3準拠) ---
+type OrderStatus = 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
 
-type OrderMonitoringListProps = {
-  orders: Order[];
-  onCompletePayment: (orderId: string) => void;
-  onForceCancel: (orderId: string, cartItems: any[]) => void;
-  onCancel: (orderId: string, cartItems: any[]) => void;
-};
+interface CartItem {
+  id: string;
+  name: string;
+  quantity: number;
+}
 
-// ==========================================
-// Module 2: Admin [運営・リアルタイム監視] コンポーネント
-// ==========================================
-export const OrderMonitoringList: React.FC<OrderMonitoringListProps> = ({
-  orders,
-  onCompletePayment,
-  onForceCancel,
-  onCancel,
-}) => {
-  // リアルタイムで経過時間を再計算するためのステート
-  const [now, setNow] = useState(new Date());
+interface Order {
+  id: string;        // Order ID
+  ticketId: string;  // Ticket ID (表示用)
+  items: CartItem[];
+  totalPrice: number;
+  status: OrderStatus;
+  createdAt: number; // Timestamp (millis)
+}
 
+// --- ダミーデータ (動作確認用) ---
+// 実際にはFirestoreからsubscribeToOrdersで取得します
+const MOCK_ORDERS: Order[] = [
+  {
+    id: 'o1', ticketId: 'A-001', items: [{ id: 'm1', name: '絶叫コースター', quantity: 2 }], 
+    totalPrice: 2000, status: 'paying', createdAt: Date.now() - 1000 * 60 * 5 // 5分前
+  },
+  {
+    id: 'o2', ticketId: 'B-012', items: [{ id: 'm2', name: 'お化け屋敷', quantity: 1 }], 
+    totalPrice: 800, status: 'ordered', createdAt: Date.now() - 1000 * 60 * 10 // 10分前
+  },
+  {
+    id: 'o3', ticketId: 'C-005', items: [{ id: 'm1', name: '絶叫コースター', quantity: 3 }], 
+    totalPrice: 3000, status: 'ordered', createdAt: Date.now() - 1000 * 60 * 45 // 45分前 (遅延対象)
+  },
+  {
+    id: 'o4', ticketId: 'D-008', items: [{ id: 'm3', name: '観覧車', quantity: 2 }], 
+    totalPrice: 1200, status: 'completed', createdAt: Date.now() - 1000 * 60 * 60 
+  },
+];
+
+export default function CouncilPage() {
+  const [systemMode, setSystemMode] = useState<string>('open'); // Module 1: 開店中など
+  const [orders, setOrders] = useState<Order[]>(MOCK_ORDERS);
+  const [now, setNow] = useState<number>(Date.now());
+
+  // --- Module 2: リアルタイム監視 (時計の更新) ---
   useEffect(() => {
-    const timer = setInterval(() => setNow(new Date()), 10000); // 10秒ごとに更新
-    return () => clearInterval(timer);
+    // 1秒ごとに現在時刻を更新し、遅延判定を再レンダリングさせる
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
   }, []);
 
-  // ------------------------------------------
-  // sortAndRenderOrders ロジックの実装
-  // ------------------------------------------
-  const sortedOrders = [...orders]
-    // 完了・キャンセル済みは除外（または別タブ扱いとする仕様のため）
-    .filter((o) => ['ordered', 'paying'].includes(o.status))
-    .sort((a, b) => {
-      // 1. 最優先: paying (支払い提示中)
-      if (a.status === 'paying' && b.status !== 'paying') return -1;
-      if (a.status !== 'paying' && b.status === 'paying') return 1;
+  // --- Module 2: 監視ロジック (subscribeToOrders想定) ---
+  // 本来はここでFirestoreのonSnapshotを設定します
 
-      // 2. 通常: ordered (注文時刻順 = 古い順)
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  // --- アクション関数 ---
+
+  // Module 1: システムモード更新
+  const updateSystemMode = (mode: string) => {
+    setSystemMode(mode);
+    alert(`システムモードを「${mode}」に変更しました`);
+    // TODO: Firestoreのシステム設定を更新
+  };
+
+  // Module 2: 支払い完了処理
+  const completePayment = (orderId: string) => {
+    if (!confirm('支払いを完了としてマークしますか？')) return;
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'completed' } : o));
+    // TODO: Firestore update status -> 'completed'
+  };
+
+  // Module 2: 通常キャンセル (在庫戻し)
+  const cancelOrder = (orderId: string, items: CartItem[]) => {
+    if (!confirm('この注文をキャンセルしますか？\n（在庫は自動的に戻ります）')) return;
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'cancelled' } : o));
+    console.log('Stock restored for:', items); 
+    // TODO: Firestore update status -> 'cancelled', atomic increment stock
+  };
+
+  // Module 2: 強制キャンセル (期限切れ)
+  const forceCancelOrder = (orderId: string, items: CartItem[]) => {
+    if (!confirm('【警告】受取期限切れのため強制キャンセルします。\nよろしいですか？')) return;
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: 'force_cancelled' } : o));
+    console.log('Stock restored (Force) for:', items);
+    // TODO: Firestore update status -> 'force_cancelled', atomic increment stock
+  };
+
+  // --- 表示・ソートロジック (sortAndRenderOrders) ---
+  const getSortedOrders = () => {
+    return [...orders].sort((a, b) => {
+        // 1. 最優先: paying
+        if (a.status === 'paying' && b.status !== 'paying') return -1;
+        if (a.status !== 'paying' && b.status === 'paying') return 1;
+        
+        // 2. Ordered (古い順)
+        if (a.status === 'ordered' && b.status === 'ordered') {
+            return a.createdAt - b.createdAt;
+        }
+        
+        // そのほかは新しい順などで適当に
+        return b.createdAt - a.createdAt;
     });
+  };
 
-  if (sortedOrders.length === 0) {
-    return <div className="text-gray-500 text-center py-8">現在進行中のオーダーはありません</div>;
-  }
+  // 遅延判定ヘルパー
+  const checkDelay = (createdAt: number) => {
+    const elapsedMinutes = Math.floor((now - createdAt) / 60000);
+    const isDelayed = elapsedMinutes >= LIMIT_TIME_MINUTES;
+    return { isDelayed, elapsedMinutes, overMinutes: elapsedMinutes - LIMIT_TIME_MINUTES };
+  };
+
+  const sortedOrders = getSortedOrders();
 
   return (
-    <div className="space-y-4">
-      {sortedOrders.map((order) => {
-        // 時間計算ロジック
-        const created = new Date(order.createdAt);
-        const diffMs = now.getTime() - created.getTime();
-        const diffMinutes = Math.floor(diffMs / 60000);
-        
-        // 警告判定: LIMIT_TIME_MINUTES 超過
-        const isTimeLimitExceeded = diffMinutes > LIMIT_TIME_MINUTES;
-        const overdueMinutes = diffMinutes - LIMIT_TIME_MINUTES;
+    <div className="min-h-screen bg-gray-100 p-6 text-gray-800">
+      {/* --- Module 1: Admin Header --- */}
+      <div className="mb-8 flex justify-between items-center bg-white p-4 rounded-xl shadow">
+        <div>
+            <h1 className="text-2xl font-bold text-gray-800">運営管理ダッシュボード</h1>
+            <p className="text-sm text-gray-500">Real-time Order Monitor</p>
+        </div>
+        <div className="flex gap-2">
+            <button 
+                onClick={() => updateSystemMode('pre_open')}
+                className={`px-4 py-2 rounded-lg font-bold border ${systemMode === 'pre_open' ? 'bg-gray-800 text-white' : 'bg-white text-gray-600'}`}
+            >
+                開店準備
+            </button>
+            <button 
+                onClick={() => updateSystemMode('open')}
+                className={`px-4 py-2 rounded-lg font-bold border ${systemMode === 'open' ? 'bg-green-600 text-white' : 'bg-white text-green-600'}`}
+            >
+                営業中
+            </button>
+            <button 
+                onClick={() => updateSystemMode('closed')}
+                className={`px-4 py-2 rounded-lg font-bold border ${systemMode === 'closed' ? 'bg-red-600 text-white' : 'bg-white text-red-600'}`}
+            >
+                受付終了
+            </button>
+        </div>
+      </div>
 
-        // ステータス判定
-        const isPaying = order.status === 'paying';
+      {/* --- Module 2: Order List --- */}
+      <div className="grid gap-4 max-w-4xl mx-auto">
+        {sortedOrders.map((order) => {
+          // 遅延チェック
+          const { isDelayed, elapsedMinutes, overMinutes } = checkDelay(order.createdAt);
+          
+          // スタイル決定
+          let cardClass = "bg-white border-l-4 shadow-sm p-4 rounded-r-lg transition-all";
+          let statusLabel = <span className="text-gray-500 font-bold bg-gray-100 px-2 py-1 rounded text-xs">その他</span>;
 
-        // ------------------------------------------
-        // UI更新: カードのスタイル決定
-        // ------------------------------------------
-        let containerClass = "p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-4 transition-all ";
-        let timeDisplay = null;
+          if (order.status === 'paying') {
+              // 最優先: 会計待ち (赤/黄色で強調・点滅)
+              cardClass = "bg-yellow-50 border-l-8 border-yellow-500 shadow-lg ring-2 ring-yellow-400 animate-pulse-slow p-6 rounded";
+              statusLabel = <span className="text-yellow-900 font-bold bg-yellow-200 px-3 py-1 rounded-full text-sm animate-pulse">会計待ち (画面提示中)</span>;
+          } else if (order.status === 'ordered') {
+              if (isDelayed) {
+                  // 遅延警告 (赤)
+                  cardClass = "bg-red-50 border-l-4 border-red-600 shadow-md p-4 rounded";
+                  statusLabel = (
+                    <span className="text-red-700 font-bold bg-red-100 px-2 py-1 rounded text-xs flex items-center gap-1">
+                        ⚠️ 遅延: {elapsedMinutes}分 (+{overMinutes}分超過)
+                    </span>
+                  );
+              } else {
+                  // 通常
+                  cardClass = "bg-white border-l-4 border-green-500 shadow p-4 rounded";
+                  statusLabel = <span className="text-green-700 font-bold bg-green-100 px-2 py-1 rounded text-xs">確保済み (経過: {elapsedMinutes}分)</span>;
+              }
+          } else if (order.status === 'completed') {
+               cardClass = "bg-gray-50 border-l-4 border-gray-300 opacity-60 p-4 rounded";
+               statusLabel = <span className="text-gray-500 font-bold border border-gray-300 px-2 py-1 rounded text-xs">受渡完了</span>;
+          } else if (order.status.includes('cancelled')) {
+               cardClass = "bg-gray-100 border-l-4 border-gray-400 opacity-50 grayscale p-4 rounded";
+               statusLabel = <span className="text-gray-500 font-bold bg-gray-200 px-2 py-1 rounded text-xs">キャンセル済</span>;
+          }
 
-        if (isPaying) {
-          // 最優先表示: 赤/黄色の強調・点滅
-          containerClass += "bg-yellow-900/30 border-yellow-400 shadow-[0_0_15px_rgba(250,204,21,0.3)] animate-pulse";
-        } else if (isTimeLimitExceeded) {
-          // 警告表示: 赤枠・赤文字
-          containerClass += "bg-red-900/20 border-red-500 text-red-200";
-        } else {
-          // 通常表示
-          containerClass += "bg-gray-800 border-gray-600 text-white";
-        }
-
-        // 時間表示テキスト生成
-        if (isTimeLimitExceeded && !isPaying) {
-            timeDisplay = (
-                <span className="text-red-400 font-bold text-sm bg-red-900/50 px-2 py-1 rounded border border-red-500 animate-bounce">
-                    ⚠️ 経過: {diffMinutes}分 (+{overdueMinutes}分超過)
-                </span>
-            );
-        } else {
-            timeDisplay = <span className="text-gray-400 text-xs">経過: {diffMinutes}分</span>;
-        }
-
-        return (
-          <div key={order.orderId} className={containerClass}>
-            {/* 左側: 注文情報 */}
-            <div className="flex-1">
-              <div className="flex items-center gap-3 mb-1">
-                <span className="text-2xl font-mono font-bold text-yellow-400">
-                  #{order.ticketId}
-                </span>
-                {isPaying && (
-                  <span className="text-xs font-bold bg-yellow-500 text-black px-2 py-0.5 rounded animate-pulse">
-                    支払い提示中
-                  </span>
-                )}
-                {timeDisplay}
-              </div>
-              
-              <div className="text-sm text-gray-300">
-                <div className="font-bold">合計: ¥{order.totalAmount.toLocaleString()}</div>
-                <div className="text-xs text-gray-500 mt-1 line-clamp-1">
-                    {order.cartItems.map(item => item.name).join(', ')}
+          return (
+            <div key={order.id} className={cardClass}>
+              <div className="flex justify-between items-start mb-2">
+                <div>
+                   <div className="flex items-center gap-3 mb-1">
+                       <span className="font-mono text-xl font-bold text-gray-800 bg-gray-200 px-2 rounded">
+                           {order.ticketId}
+                       </span>
+                       {statusLabel}
+                   </div>
+                   <div className="text-sm text-gray-600">
+                       {order.items.map((item, idx) => (
+                           <div key={idx}>・{item.name} × {item.quantity}</div>
+                       ))}
+                   </div>
+                </div>
+                <div className="text-right">
+                    <p className="text-2xl font-bold text-gray-900">¥{order.totalPrice.toLocaleString()}</p>
+                    <p className="text-xs text-gray-400 mt-1">Order ID: {order.id}</p>
                 </div>
               </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 mt-4 border-t pt-3">
+                  {order.status === 'paying' && (
+                      <button 
+                        onClick={() => completePayment(order.id)}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded shadow-lg transform active:scale-95 transition"
+                      >
+                          支払い完了・受渡
+                      </button>
+                  )}
+
+                  {order.status === 'ordered' && (
+                      <>
+                        <button 
+                            onClick={() => completePayment(order.id)}
+                            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+                        >
+                            支払い完了
+                        </button>
+                        
+                        {isDelayed ? (
+                            <button 
+                                onClick={() => forceCancelOrder(order.id, order.items)}
+                                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded shadow border-2 border-red-800"
+                            >
+                                強制キャンセル (在庫戻し)
+                            </button>
+                        ) : (
+                            <button 
+                                onClick={() => cancelOrder(order.id, order.items)}
+                                className="text-red-500 hover:bg-red-50 font-bold py-2 px-4 rounded border border-red-200"
+                            >
+                                キャンセル
+                            </button>
+                        )}
+                      </>
+                  )}
+              </div>
             </div>
-
-            {/* 右側: アクションボタン (Module 2 操作) */}
-            <div className="flex gap-2 items-center">
-              
-              {/* Force Cancel Button: 期限切れの場合のみ目立つように表示 */}
-              {isTimeLimitExceeded && !isPaying && (
-                <button
-                  onClick={() => {
-                    if(window.confirm(`チケット #${order.ticketId} を強制キャンセルし、在庫を戻しますか？`)) {
-                      onForceCancel(order.orderId, order.cartItems);
-                    }
-                  }}
-                  className="bg-red-600 hover:bg-red-500 text-white font-bold text-xs px-3 py-3 rounded border border-red-400 shadow-lg whitespace-nowrap"
-                >
-                  ⚡ 強制キャンセル
-                  <span className="block text-[10px] font-normal">(在庫戻し)</span>
-                </button>
-              )}
-
-              {/* 通常キャンセル (まだ期限内、または支払い中の場合) */}
-              {!isTimeLimitExceeded && (
-                 <button
-                 onClick={() => {
-                   if(window.confirm('この注文をキャンセルしますか？')) {
-                     onCancel(order.orderId, order.cartItems);
-                   }
-                 }}
-                 className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs px-3 py-3 rounded whitespace-nowrap"
-               >
-                 キャンセル
-               </button>
-              )}
-
-              {/* 支払い完了ボタン (completePayment) */}
-              <button
-                onClick={() => onCompletePayment(order.orderId)}
-                className={`font-bold px-6 py-3 rounded shadow-lg transition whitespace-nowrap ${
-                    isPaying 
-                    ? "bg-green-600 hover:bg-green-500 text-white scale-105" 
-                    : "bg-blue-600 hover:bg-blue-500 text-white"
-                }`}
-              >
-                💰 支払い完了
-              </button>
+          );
+        })}
+        
+        {sortedOrders.length === 0 && (
+            <div className="text-center text-gray-400 py-10">
+                注文データがありません
             </div>
-          </div>
-        );
-      })}
+        )}
+      </div>
     </div>
   );
-};
+}
