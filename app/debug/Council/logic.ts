@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 // 階層に合わせてパスを調整してください
 import { db, auth } from "../../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, increment } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 // GoogleドライブのURLを自動変換する関数
@@ -33,7 +33,7 @@ export const useAdminLogic = () => {
   const [password, setPassword] = useState("");
     
   const [department, setDepartment] = useState(""); // 団体名
-  const [imageUrl, setImageUrl] = useState("");     // 画像URL
+  const [imageUrl, setImageUrl] = useState("");      // 画像URL
   const [description, setDescription] = useState(""); // 会場説明文
 
   const [groupLimit, setGroupLimit] = useState(4);
@@ -202,6 +202,7 @@ export const useAdminLogic = () => {
     if (!isEditing) {
         data.reservations = [];
         data.queue = [];
+        data.orders = []; // 新規作成時はオーダー配列も初期化
     }
 
     try {
@@ -240,7 +241,7 @@ export const useAdminLogic = () => {
       await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
 
-  // --- ★ 順番待ちキュー操作 (修正済み) ---
+  // --- 順番待ちキュー操作 ---
   const updateQueueStatus = async (shop: any, ticket: any, newStatus: 'waiting' | 'ready' | 'completed' | 'canceled') => {
     let msg = "";
     if (newStatus === 'ready') msg = "呼び出しを行いますか？\n（ユーザーの画面が赤くなります）";
@@ -270,6 +271,45 @@ export const useAdminLogic = () => {
     }
   };
 
+  // --- ★追加実装: オーダー操作 (Module 2: Admin) ---
+  const handleOrderAction = async (shop: any, order: any, actionType: 'payment' | 'force_cancel') => {
+    const actionName = actionType === 'payment' ? "支払い完了" : "強制キャンセル";
+    if (!confirm(`${actionName}処理を行いますか？${actionType === 'force_cancel' ? '\n※遅延のため在庫は戻されます。' : ''}`)) return;
+
+    try {
+        // 1. オーダー配列のステータス更新
+        const updatedOrders = shop.orders?.map((o: any) => {
+            if (o.id === order.id) {
+                return {
+                    ...o,
+                    status: actionType === 'payment' ? 'completed' : 'force_cancelled', // force_cancelled status
+                    updatedAt: new Date().toISOString()
+                };
+            }
+            return o;
+        }) || [];
+
+        const updateData: any = { orders: updatedOrders };
+
+        // 2. 強制キャンセルの場合、在庫を復元 (Atomic Increment)
+        if (actionType === 'force_cancel' && order.items) {
+            order.items.forEach((item: any) => {
+                if (item.id) {
+                    // Firestoreのドット記法で特定の在庫フィールドをアトミックに加算
+                    // 例: "stock.item_abc": increment(2)
+                    updateData[`stock.${item.id}`] = increment(item.count);
+                }
+            });
+        }
+
+        await updateDoc(doc(db, "attractions", shop.id), updateData);
+
+    } catch (e) {
+        console.error("Order Action Error:", e);
+        alert(`${actionName}に失敗しました。`);
+    }
+  };
+
   const targetShop = attractions.find(s => s.id === expandedShopId);
 
   return {
@@ -286,6 +326,7 @@ export const useAdminLogic = () => {
     handleBulkPause, handleBulkDeleteReservations, handleBulkDeleteVenues,
     resetForm, startEdit, handleSave, handleDeleteVenue,
     toggleReservationStatus, cancelReservation, updateQueueStatus,
+    handleOrderAction, // 追加
     targetShop
   };
 };
