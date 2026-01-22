@@ -1,7 +1,8 @@
+//app/debug/AdminEditForm.tsx
 "use client";
-import React from "react";
+import React, { useState } from "react";
 
-// GoogleドライブのURLを自動変換する関数（ここで使用）
+// GoogleドライブのURLを自動変換する関数
 const convertGoogleDriveLink = (url: string) => {
   if (!url) return "";
   if (!url.includes("drive.google.com") || url.includes("export=view")) {
@@ -15,26 +16,63 @@ const convertGoogleDriveLink = (url: string) => {
   }
 };
 
+// メニューアイテムの型定義 (仕様書 Section 3準拠)
+type MenuItem = {
+  id?: string;
+  name: string;
+  price: number;
+  stock: number;
+  limit: number;
+};
+
 type Props = {
   isEditing: boolean;
   manualId: string;
+  
+  // 会場基本情報
   newName: string; setNewName: (v: string) => void;
   department: string;
   imageUrl: string; setImageUrl: (v: string) => void;
   description: string; setDescription: (v: string) => void;
   password: string;
+  
+  // 設定
   groupLimit: number; setGroupLimit: (v: number) => void;
   openTime: string; setOpenTime: (v: string) => void;
   closeTime: string; setCloseTime: (v: string) => void;
   duration: number; setDuration: (v: number) => void;
   capacity: number; setCapacity: (v: number) => void;
-  isPaused: boolean; setIsPaused: (v: boolean) => void;
+  
+  // システムモード (Module 1: updateSystemMode)
+  // 従来の isPaused boolean から systemMode string へ拡張
+  systemMode: string; setSystemMode: (v: string) => void; 
+  
   isQueueMode: boolean; setIsQueueMode: (v: boolean) => void;
+  
+  // メニュー管理 (Module 1: add/update/deleteMenuItem)
+  menuList: MenuItem[];
+  handleSaveMenu: (item: MenuItem) => void;
+  handleDeleteMenu: (id: string) => void;
+
   handleSave: () => void;
   resetForm: () => void;
 };
 
 export default function AdminEditForm(props: Props) {
+  // メニュー追加用のローカルステート
+  const [menuForm, setMenuForm] = useState<MenuItem>({
+    name: "",
+    price: 0,
+    stock: 0,
+    limit: 1
+  });
+
+  const onAddMenuClick = () => {
+    if (!menuForm.name || menuForm.price < 0) return alert("商品名と価格を入力してください");
+    props.handleSaveMenu(menuForm);
+    setMenuForm({ name: "", price: 0, stock: 0, limit: 1 }); // リセット
+  };
+
   if (!props.isEditing) {
     return (
       <div className="bg-gray-800/50 rounded p-3 mb-4 border border-gray-700 text-center text-xs text-gray-500">
@@ -95,13 +133,31 @@ export default function AdminEditForm(props: Props) {
         <div className="text-right text-xs text-gray-500">{props.description.length}/500</div>
       </div>
 
-      {/* 5. 運用モード設定 */}
+      {/* 5. 運用モード設定 (Module 1: updateSystemMode) */}
       <div className="bg-gray-750 p-3 rounded border border-gray-600 mb-4 bg-gray-900/30">
         <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider">Operation Mode</h4>
-        <div className="flex flex-wrap gap-4 items-center">
-          <div className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded border border-gray-700">
+        <div className="flex flex-col gap-3">
+          {/* システム全体のモード切替 */}
+          <div className="flex items-center gap-4 bg-gray-800 p-2 rounded border border-gray-700">
+            <span className="text-xs font-bold text-gray-400 w-20">営業状態:</span>
+            <select 
+              value={props.systemMode || "closed"} 
+              onChange={(e) => props.setSystemMode(e.target.value)}
+              className={`flex-1 p-1 rounded text-sm font-bold outline-none border 
+                ${props.systemMode === "open" ? "bg-green-900 text-green-300 border-green-700" : 
+                  props.systemMode === "pre_open" ? "bg-yellow-900 text-yellow-300 border-yellow-700" : 
+                  "bg-red-900 text-red-300 border-red-700"}`}
+            >
+              <option value="pre_open">🟡 開店前 (準備中)</option>
+              <option value="open">🟢 営業中 (受付開始)</option>
+              <option value="closed">🔴 受付終了 / 停止</option>
+            </select>
+          </div>
+
+          {/* 予約/順番待ちモード切替 */}
+          <div className="flex items-center gap-2 bg-gray-800 p-2 rounded border border-gray-700">
             <span className={`text-xs font-bold ${!props.isQueueMode ? "text-blue-400" : "text-gray-500"}`}>🕒 時間予約制</span>
-            <div className="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+            <div className="relative inline-block w-10 mx-2 align-middle select-none transition duration-200 ease-in">
               <input type="checkbox" name="toggle" id="mode-toggle"
                 checked={props.isQueueMode}
                 onChange={(e) => props.setIsQueueMode(e.target.checked)}
@@ -112,15 +168,94 @@ export default function AdminEditForm(props: Props) {
             </div>
             <span className={`text-xs font-bold ${props.isQueueMode ? "text-green-400" : "text-gray-500"}`}>🔢 順番待ち制</span>
           </div>
-
-          <div className="flex items-center gap-2 bg-gray-800 px-3 py-2 rounded border border-gray-700">
-            <input type="checkbox" checked={props.isPaused} onChange={e => props.setIsPaused(e.target.checked)} className="accent-red-500 w-4 h-4 cursor-pointer" />
-            <span className={`text-xs font-bold ${props.isPaused ? "text-red-400" : "text-gray-400"}`}>⛔ 受付を緊急停止</span>
-          </div>
         </div>
       </div>
 
-      {/* 6. 時間・予約設定 (時間予約制のみ) */}
+      {/* 6. メニュー管理 (Module 1: Menu Management) */}
+      <div className="bg-gray-750 p-3 rounded border border-gray-600 mb-4 bg-gray-900/30">
+        <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider flex items-center gap-2">
+          <span>🍔 Menu Items</span>
+          <span className="text-[10px] bg-blue-900 text-blue-200 px-2 py-0.5 rounded">Order System</span>
+        </h4>
+        
+        {/* メニュー登録フォーム */}
+        <div className="bg-gray-800 p-3 rounded border border-gray-700 mb-3">
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-12 md:col-span-4">
+              <label className="text-[10px] text-gray-400 block mb-1">商品名</label>
+              <input 
+                className="w-full bg-gray-700 p-1.5 rounded text-sm text-white border border-gray-600"
+                placeholder="例: 焼きそば"
+                value={menuForm.name}
+                onChange={e => setMenuForm({...menuForm, name: e.target.value})}
+              />
+            </div>
+            <div className="col-span-4 md:col-span-2">
+              <label className="text-[10px] text-gray-400 block mb-1">単価(¥)</label>
+              <input 
+                type="number"
+                className="w-full bg-gray-700 p-1.5 rounded text-sm text-white border border-gray-600"
+                placeholder="0"
+                value={menuForm.price}
+                onChange={e => setMenuForm({...menuForm, price: Number(e.target.value)})}
+              />
+            </div>
+            <div className="col-span-4 md:col-span-2">
+              <label className="text-[10px] text-gray-400 block mb-1">在庫数(Stock)</label>
+              <input 
+                type="number"
+                className="w-full bg-gray-700 p-1.5 rounded text-sm text-white border border-gray-600"
+                placeholder="0"
+                value={menuForm.stock}
+                onChange={e => setMenuForm({...menuForm, stock: Number(e.target.value)})}
+              />
+            </div>
+            <div className="col-span-4 md:col-span-2">
+              <label className="text-[10px] text-gray-400 block mb-1">購入制限(個/人)</label>
+              <input 
+                type="number"
+                className="w-full bg-gray-700 p-1.5 rounded text-sm text-white border border-gray-600"
+                placeholder="1"
+                value={menuForm.limit}
+                onChange={e => setMenuForm({...menuForm, limit: Number(e.target.value)})}
+              />
+            </div>
+            <div className="col-span-12 md:col-span-2">
+              <button onClick={onAddMenuClick} className="w-full bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded text-xs font-bold transition">
+                追加
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* メニューリスト */}
+        <div className="space-y-1 max-h-40 overflow-y-auto">
+          {props.menuList && props.menuList.length > 0 ? (
+            props.menuList.map((item, idx) => (
+              <div key={item.id || idx} className="flex justify-between items-center bg-gray-800 px-3 py-2 rounded border border-gray-700 text-sm">
+                <div className="flex-1">
+                  <span className="font-bold text-white">{item.name}</span>
+                  <div className="text-xs text-gray-400 flex gap-2">
+                    <span>¥{item.price}</span>
+                    <span className={item.stock === 0 ? "text-red-500 font-bold" : ""}>在庫: {item.stock}</span>
+                    <span>制限: {item.limit}</span>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => item.id && props.handleDeleteMenu(item.id)}
+                  className="text-gray-500 hover:text-red-400 transition"
+                >
+                  🗑
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-xs text-gray-500 py-2">メニューが登録されていません</div>
+          )}
+        </div>
+      </div>
+
+      {/* 7. 時間・予約設定 (時間予約制のみ) */}
       {!props.isQueueMode && (
         <div className="bg-gray-750 p-3 rounded border border-gray-600 mb-4 bg-gray-900/30">
           <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase tracking-wider">Time Settings (予約制のみ)</h4>
@@ -145,7 +280,7 @@ export default function AdminEditForm(props: Props) {
         </div>
       )}
 
-      {/* 7. 人数制限 (共通) */}
+      {/* 8. 人数制限 (共通) */}
       <div className="bg-gray-750 p-3 rounded border border-gray-600 mb-4 bg-gray-900/30 flex items-center gap-4">
         <div className="flex flex-col">
           <label className="text-[10px] text-gray-400 mb-1">1組の最大人数</label>
