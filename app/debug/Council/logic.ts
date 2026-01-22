@@ -1,291 +1,363 @@
+// app/debug/Council/logic.ts
 import { useState, useEffect, useMemo } from "react";
-// 階層に合わせてパスを調整してください
 import { db, auth } from "../../../firebase"; 
-import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
+import { 
+  collection, 
+  onSnapshot, 
+  doc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  runTransaction, 
+  serverTimestamp, 
+  Timestamp, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-// GoogleドライブのURLを自動変換する関数
-export const convertGoogleDriveLink = (url: string) => {
-  if (!url) return "";
-  if (!url.includes("drive.google.com") || url.includes("export=view")) {
-    return url;
-  }
-  try {
-    const id = url.split("/d/")[1].split("/")[0];
-    return `https://drive.google.com/uc?export=view&id=${id}`;
-  } catch (e) {
-    return url;
-  }
-};
+// --- 2. 共通設定 (Constants) ---
+export const LIMIT_TIME_MINUTES = 30;
 
+// --- 型定義 ---
+export type OrderStatus = 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  limit: number; // 1人あたりの購入制限
+  displayOrder: number;
+  isSoldOut: boolean;
+}
+
+export interface CartItem {
+  menuId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface Order {
+  id: string;
+  ticketId: string; // 表示用チケット番号
+  items: CartItem[];
+  totalAmount: number;
+  status: OrderStatus;
+  createdAt: Timestamp;
+  userId: string;
+}
+
+// --- Module 1 & 2: Admin Logic [設定・管理・監視] ---
 export const useAdminLogic = () => {
-  const [attractions, setAttractions] = useState<any[]>([]);
-  const [myUserId, setMyUserId] = useState("");
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [systemMode, setSystemMode] = useState<string>("open"); // preparation, open, closed
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
-  // 表示モード管理
-  const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
-  const [isEditing, setIsEditing] = useState(false);
-  const [originalId, setOriginalId] = useState<string | null>(null);
-
-  // フォーム用ステート
-  const [manualId, setManualId] = useState("");
-  const [newName, setNewName] = useState("");
-  const [password, setPassword] = useState("");
-    
-  const [department, setDepartment] = useState(""); // 団体名
-  const [imageUrl, setImageUrl] = useState("");     // 画像URL
-  const [description, setDescription] = useState(""); // 会場説明文
-
-  const [groupLimit, setGroupLimit] = useState(4);
-  const [openTime, setOpenTime] = useState("10:00");
-  const [closeTime, setCloseTime] = useState("15:00");
-  const [duration, setDuration] = useState(20);
-  const [capacity, setCapacity] = useState(3);
-  const [isPaused, setIsPaused] = useState(false);
-
-  // ★追加: 運用モード（予約制 or 順番待ち制）
-  const [isQueueMode, setIsQueueMode] = useState(false);
-
-  // 検索用
-  const [searchUserId, setSearchUserId] = useState("");
-
+  // 初期化・認証
   useEffect(() => {
     signInAnonymously(auth).catch((e) => console.error(e));
 
-    let stored = localStorage.getItem("bunkasai_user_id");
-    if (!stored) {
-        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let result = "";
-        for (let i = 0; i < 6; i++) {
-            result += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        stored = result;
-        localStorage.setItem("bunkasai_user_id", stored);
-    }
-    setMyUserId(stored);
+    // タイマー更新 (遅延判定用)
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
-      const newData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setAttractions(newData);
+  // Menu監視
+  useEffect(() => {
+    const q = query(collection(db, "menu"), orderBy("displayOrder", "asc"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setMenuItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
     });
     return () => unsub();
   }, []);
 
-  // 統計データ
-  const stats = useMemo(() => {
-      const totalVenues = attractions.length;
-      const pausedVenues = attractions.filter(a => a.isPaused).length;
-      const totalReservations = attractions.reduce((sum, shop) => {
-        if (shop.isQueueMode && shop.queue) {
-             return sum + shop.queue.filter((t: any) => ['waiting', 'ready'].includes(t.status)).length;
-        }
-        return sum + (shop.reservations?.length || 0);
-      }, 0);
+  // Orders監視 (subscribeToOrders)
+  useEffect(() => {
+    // 完了済み以外または直近のもの取得が望ましいが、ここでは全件取得してJS側でフィルタリング
+    const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
+    const unsub = onSnapshot(q, (snapshot) => {
+      setOrders(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
+    });
+    return () => unsub();
+  }, []);
 
-      return {
-          totalVenues: String(totalVenues).padStart(3, '0'),
-          pausedVenues: String(pausedVenues).padStart(3, '0'),
-          totalReservations: String(totalReservations).padStart(7, '0'),
-      };
-  }, [attractions]);
-
-  // 一斉操作
-  const handleBulkPause = async (shouldPause: boolean) => {
-      const actionName = shouldPause ? "一斉停止" : "一斉再開";
-      if(!confirm(`全ての会場を「${actionName}」しますか？`)) return;
-      try {
-          const promises = attractions.map(shop => 
-              updateDoc(doc(db, "attractions", shop.id), { isPaused: shouldPause })
-          );
-          await Promise.all(promises);
-          alert(`${actionName}が完了しました。`);
-      } catch(e) { console.error(e); alert("エラーが発生しました。"); }
+  // --- Module 1: メニュー管理機能 ---
+  const updateSystemMode = async (mode: string) => {
+    // システム設定ドキュメントがあると仮定、なければローカルステートのみ
+    setSystemMode(mode); 
   };
 
-  const handleBulkDeleteReservations = async () => {
-      if(!confirm("【危険】全会場の「予約データ」および「待機列」を全て削除します。\n本当によろしいですか？")) return;
-      if(prompt("確認のため 'DELETE' と入力してください") !== "DELETE") return;
-      try {
-          const promises = attractions.map(shop => {
-              const resetSlots: any = {};
-              Object.keys(shop.slots || {}).forEach(key => { resetSlots[key] = 0; });
-              return updateDoc(doc(db, "attractions", shop.id), { reservations: [], queue: [], slots: resetSlots });
-          });
-          await Promise.all(promises);
-          alert("完了しました。");
-      } catch(e) { console.error(e); alert("エラーが発生しました。"); }
+  const addMenuItem = async (item: Omit<MenuItem, "id">) => {
+    await addDoc(collection(db, "menu"), item);
   };
 
-  const handleBulkDeleteVenues = async () => {
-      if(!confirm("【超危険】全ての「会場データ」そのものを削除します。\n復元できません。本当によろしいですか？")) return;
-      if(prompt("本気で削除する場合は 'DESTROY' と入力してください") !== "DESTROY") return;
-      try {
-          const promises = attractions.map(shop => deleteDoc(doc(db, "attractions", shop.id)));
-          await Promise.all(promises);
-          setExpandedShopId(null);
-          alert("完了しました。");
-      } catch(e) { console.error(e); alert("エラーが発生しました。"); }
+  const updateMenuItem = async (id: string, data: Partial<MenuItem>) => {
+    await updateDoc(doc(db, "menu", id), data);
   };
 
-  // 編集・作成関連
-  const resetForm = () => {
-    setIsEditing(false);
-    setOriginalId(null);
-    setManualId(""); setNewName(""); setPassword("");
-    setDepartment(""); setImageUrl(""); setDescription("");
-    setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
-    setDuration(20); setCapacity(3); setIsPaused(false);
-    setIsQueueMode(false); 
+  const deleteMenuItem = async (id: string) => {
+    if(!confirm("商品を削除しますか？")) return;
+    await deleteDoc(doc(db, "menu", id));
   };
 
-  const startEdit = (shop: any) => {
-    setIsEditing(true);
-    setOriginalId(shop.id);
-    setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
-    setDepartment(shop.department || "");
-    setImageUrl(shop.imageUrl || "");
-    setDescription(shop.description || "");
-    setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
-    setCloseTime(shop.closeTime); setDuration(shop.duration);
-    setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
-    setIsQueueMode(shop.isQueueMode || false);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  // --- Module 2: オーダー処理機能 ---
+  
+  // ソート・レンダリングロジック (sortAndRenderOrders)
+  const processedOrders = useMemo(() => {
+    const activeOrders = orders.filter(o => !['cancelled', 'force_cancelled'].includes(o.status));
+    
+    return activeOrders.sort((a, b) => {
+      // 1. Status: paying (最優先)
+      if (a.status === 'paying' && b.status !== 'paying') return -1;
+      if (a.status !== 'paying' && b.status === 'paying') return 1;
 
-  const handleSave = async () => {
-    if (!manualId || !newName || !password) return alert("必須項目(ID, 会場名, Pass)を入力してください");
-    if (password.length !== 5) return alert("パスワードは5桁です");
+      // 2. Status: ordered (古い順 = createdAt昇順)
+      if (a.status === 'ordered' && b.status === 'ordered') {
+        return a.createdAt.toMillis() - b.createdAt.toMillis();
+      }
 
-    if (isEditing && originalId !== manualId) {
-        if (attractions.some(s => s.id === manualId)) return alert(`ID「${manualId}」は既に存在します。`);
-    }
-
-    let slots: any = {};
-    let shouldResetSlots = true;
-    let existingReservations = [];
-    let existingQueue = [];
-
-    if (isEditing) {
-        const currentShop = attractions.find(s => s.id === originalId);
-        if (currentShop) {
-            existingReservations = currentShop.reservations || [];
-            existingQueue = currentShop.queue || []; 
-            if (currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
-                slots = currentShop.slots;
-                shouldResetSlots = false;
-            } else {
-                if(!isQueueMode && !confirm("時間を変更すると、現在の予約枠がリセットされます。よろしいですか？")) return;
-            }
-        }
-    }
-
-    if (shouldResetSlots) {
-        let current = new Date(`2000/01/01 ${openTime}`);
-        const end = new Date(`2000/01/01 ${closeTime}`);
-        slots = {};
-        while (current < end) {
-            const timeStr = current.toTimeString().substring(0, 5);
-            slots = { ...slots, [timeStr]: 0 };
-            current.setMinutes(current.getMinutes() + duration);
-        }
-    }
-
-    const data: any = {
-      name: newName, password, groupLimit,
-      department, imageUrl, description,
-      openTime, closeTime, duration, capacity, isPaused, slots,
-      isQueueMode, 
-      reservations: existingReservations,
-      queue: existingQueue 
-    };
-
-    if (!isEditing) {
-        data.reservations = [];
-        data.queue = [];
-    }
-
-    try {
-        if (isEditing && originalId && manualId !== originalId) {
-            if(!confirm(`会場IDを「${originalId}」から「${manualId}」に変更しますか？`)) return;
-            await setDoc(doc(db, "attractions", manualId), data);
-            await deleteDoc(doc(db, "attractions", originalId));
-            setExpandedShopId(manualId);
-        } else {
-            await setDoc(doc(db, "attractions", manualId), data, { merge: true });
-            if(isEditing) setExpandedShopId(manualId);
-        }
-        alert(isEditing ? "更新しました" : "作成しました");
-        resetForm();
-    } catch(e) { console.error(e); alert("エラーが発生しました"); }
-  };
-
-  const handleDeleteVenue = async (id: string) => {
-    if (!confirm("本当に会場を削除しますか？")) return;
-    await deleteDoc(doc(db, "attractions", id));
-    setExpandedShopId(null);
-  };
-
-  // --- 予約操作 (従来モード用) ---
-  const toggleReservationStatus = async (shop: any, res: any, newStatus: "reserved" | "used") => {
-     if(!confirm(newStatus === "used" ? "入場済みにしますか？" : "入場を取り消しますか？")) return;
-     const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-     const updatedRes = { ...res, status: newStatus };
-     await updateDoc(doc(db, "attractions", shop.id), { reservations: [...otherRes, updatedRes] });
-  };
-
-  const cancelReservation = async (shop: any, res: any) => {
-      if(!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
-      const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-      const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
-      await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
-  };
-
-  // --- ★ 順番待ちキュー操作 (修正済み) ---
-  const updateQueueStatus = async (shop: any, ticket: any, newStatus: 'waiting' | 'ready' | 'completed' | 'canceled') => {
-    let msg = "";
-    if (newStatus === 'ready') msg = "呼び出しを行いますか？\n（ユーザーの画面が赤くなります）";
-    if (newStatus === 'completed') msg = "【入場処理】\nこのチケットを入場済みにし、リストから削除しますか？";
-    if (newStatus === 'canceled') msg = "【強制取消】\nこのチケットを無効にし、リストから削除しますか？";
+      // 3. Status: completed (新しい順 = createdAt降順)
+      if (a.status === 'completed' && b.status === 'completed') {
+        return b.createdAt.toMillis() - a.createdAt.toMillis();
+      }
       
-    if (newStatus !== 'waiting' && !confirm(msg)) return;
+      return 0;
+    }).map(order => {
+      // 遅延判定ロジック
+      const elapsedMinutes = (currentTime.getTime() - order.createdAt.toDate().getTime()) / (1000 * 60);
+      const isDelayed = order.status === 'ordered' && elapsedMinutes > LIMIT_TIME_MINUTES;
+      
+      return {
+        ...order,
+        isDelayed,
+        delayedMinutes: Math.floor(elapsedMinutes - LIMIT_TIME_MINUTES)
+      };
+    });
+  }, [orders, currentTime]);
 
-    if (newStatus === 'completed' || newStatus === 'canceled') {
-        const newQueue = shop.queue.filter((t: any) => {
-            if (ticket.ticketId) {
-                return t.ticketId !== ticket.ticketId;
-            } else {
-                return t.userId !== ticket.userId;
-            }
-        });
-        await updateDoc(doc(db, "attractions", shop.id), { queue: newQueue });
-    } else {
-        const updatedQueue = shop.queue.map((t: any) => {
-            const isMatch = ticket.ticketId ? (t.ticketId === ticket.ticketId) : (t.userId === ticket.userId);
-            if (isMatch) {
-                return { ...t, status: newStatus };
-            }
-            return t;
-        });
-        await updateDoc(doc(db, "attractions", shop.id), { queue: updatedQueue });
-    }
+  // 支払い完了処理 (completePayment)
+  const completePayment = async (orderId: string) => {
+    await updateDoc(doc(db, "orders", orderId), { status: "completed" });
   };
 
-  const targetShop = attractions.find(s => s.id === expandedShopId);
+  // 通常キャンセル (cancelOrder) - 在庫戻し付き
+  const cancelOrder = async (orderId: string, items: CartItem[]) => {
+    if(!confirm("注文をキャンセルし、在庫を戻しますか？")) return;
+    await performCancelTransaction(orderId, items, "cancelled");
+  };
+
+  // 強制キャンセル (forceCancelOrder) - 在庫戻し付き
+  const forceCancelOrder = async (orderId: string, items: CartItem[]) => {
+    if(!confirm("期限切れのため強制キャンセルしますか？")) return;
+    await performCancelTransaction(orderId, items, "force_cancelled");
+  };
+
+  // 共通トランザクション処理 (在庫復元)
+  const performCancelTransaction = async (orderId: string, items: CartItem[], newStatus: OrderStatus) => {
+    try {
+      await runTransaction(db, async (transaction) => {
+        // オーダー状態更新
+        const orderRef = doc(db, "orders", orderId);
+        transaction.update(orderRef, { status: newStatus });
+
+        // 在庫復元 (Atomic Increment)
+        for (const item of items) {
+          const menuRef = doc(db, "menu", item.menuId);
+          const menuDoc = await transaction.get(menuRef);
+          if (menuDoc.exists()) {
+            const currentStock = menuDoc.data().stock || 0;
+            transaction.update(menuRef, { stock: currentStock + item.quantity });
+          }
+        }
+      });
+      alert("キャンセル処理が完了しました。");
+    } catch (e) {
+      console.error("Cancel Transaction Failed", e);
+      alert("キャンセル処理に失敗しました。");
+    }
+  };
 
   return {
-    attractions, myUserId,
-    expandedShopId, setExpandedShopId,
-    isEditing, setIsEditing, originalId,
-    manualId, setManualId, newName, setNewName, password, setPassword,
-    department, setDepartment, imageUrl, setImageUrl, description, setDescription,
-    groupLimit, setGroupLimit, openTime, setOpenTime, closeTime, setCloseTime,
-    duration, setDuration, capacity, setCapacity, isPaused, setIsPaused,
-    isQueueMode, setIsQueueMode,
-    searchUserId, setSearchUserId,
-    stats,
-    handleBulkPause, handleBulkDeleteReservations, handleBulkDeleteVenues,
-    resetForm, startEdit, handleSave, handleDeleteVenue,
-    toggleReservationStatus, cancelReservation, updateQueueStatus,
-    targetShop
+    menuItems,
+    orders: processedOrders, // UI側ではこれを使用
+    systemMode,
+    updateSystemMode,
+    addMenuItem,
+    updateMenuItem,
+    deleteMenuItem,
+    completePayment,
+    cancelOrder,
+    forceCancelOrder,
+    LIMIT_TIME_MINUTES
+  };
+};
+
+// --- Module 3 & 4: User Logic [注文・チケット] ---
+export const useUserLogic = () => {
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [myOrder, setMyOrder] = useState<Order | null>(null);
+  const [remainingTime, setRemainingTime] = useState<string>("");
+  const [isExpired, setIsExpired] = useState(false);
+
+  // ユーザーID管理
+  const myUserId = useMemo(() => {
+    let stored = localStorage.getItem("order_system_user_id");
+    if (!stored) {
+      stored = "U_" + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem("order_system_user_id", stored);
+    }
+    return stored;
+  }, []);
+
+  // 初期データロード
+  useEffect(() => {
+    signInAnonymously(auth).catch(console.error);
+    
+    // Menu購読
+    const unsubMenu = onSnapshot(query(collection(db, "menu"), orderBy("displayOrder")), (snap) => {
+      setMenuItems(snap.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
+    });
+
+    return () => unsubMenu();
+  }, []);
+
+  // 自分のオーダー監視 (monitorOrderStatus)
+  useEffect(() => {
+    if (!myOrder && !localStorage.getItem("current_order_id")) return;
+    
+    const orderId = myOrder?.id || localStorage.getItem("current_order_id");
+    if (!orderId) return;
+
+    const unsubOrder = onSnapshot(doc(db, "orders", orderId), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = { id: docSnap.id, ...docSnap.data() } as Order;
+        setMyOrder(data);
+        localStorage.setItem("current_order_id", data.id); // 永続化
+
+        // 完了またはキャンセル時の処理
+        if (data.status === 'completed') {
+            // UI側で「購入ありがとうございます」へ遷移
+        }
+      } else {
+        // ドキュメントが消えた場合など
+        setMyOrder(null);
+        localStorage.removeItem("current_order_id");
+      }
+    });
+    
+    return () => unsubOrder();
+  }, [myOrder?.id]);
+
+  // チケットタイマー制御 (displayTicket UI logic)
+  useEffect(() => {
+    if (!myOrder || myOrder.status === 'completed' || myOrder.status === 'cancelled') return;
+
+    const interval = setInterval(() => {
+      const createdTime = myOrder.createdAt.toDate().getTime();
+      const now = new Date().getTime();
+      const limitMs = LIMIT_TIME_MINUTES * 60 * 1000;
+      const elapsed = now - createdTime;
+      const remaining = limitMs - elapsed;
+
+      if (remaining <= 0) {
+        setIsExpired(true);
+        setRemainingTime("00:00");
+      } else {
+        setIsExpired(false);
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        setRemainingTime(`${m}:${s.toString().padStart(2, '0')}`);
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [myOrder]);
+
+  // --- Module 3: 注文・在庫確保トランザクション (submitOrder) ---
+  const submitOrder = async () => {
+    if (cart.length === 0) return;
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        
+        // 1. 最新在庫確認
+        for (const item of cart) {
+          const menuRef = doc(db, "menu", item.menuId);
+          const menuDoc = await transaction.get(menuRef);
+          
+          if (!menuDoc.exists()) throw new Error("商品が存在しません");
+          
+          const currentStock = menuDoc.data().stock;
+          if (currentStock < item.quantity) {
+            throw new Error(`「${item.name}」がタッチの差で売り切れました`);
+          }
+          
+          // 2. 在庫減算
+          transaction.update(menuRef, { stock: currentStock - item.quantity });
+        }
+
+        // 3. 注文作成
+        const newOrderRef = doc(collection(db, "orders"));
+        const newOrderData = {
+          ticketId: Math.floor(1000 + Math.random() * 9000).toString(), // 簡易チケット番号
+          items: cart,
+          totalAmount: totalAmount,
+          status: "ordered",
+          createdAt: serverTimestamp(),
+          userId: myUserId
+        };
+        transaction.set(newOrderRef, newOrderData);
+        
+        // ローカルステート更新用にIDを保存 (Snapshotが拾うまでの繋ぎ)
+        localStorage.setItem("current_order_id", newOrderRef.id);
+      });
+      
+      // 成功後、カートクリア
+      setCart([]);
+      return true; // 画面遷移用
+    } catch (e: any) {
+      alert(e.message || "注文処理中にエラーが発生しました");
+      return false;
+    }
+  };
+
+  // --- Module 4: 支払いフロー (enterPaymentMode) ---
+  const enterPaymentMode = async () => {
+    if (!myOrder) return;
+    try {
+      await updateDoc(doc(db, "orders", myOrder.id), { status: "paying" });
+    } catch (e) {
+      console.error(e);
+      alert("通信エラーが発生しました");
+    }
+  };
+
+  // カート操作ヘルパー
+  const addToCart = (menuItem: MenuItem, quantity: number) => {
+    // limitチェックなどはUI側で行う前提だが、ここでもガード可能
+    setCart(prev => {
+      const existing = prev.find(p => p.menuId === menuItem.id);
+      if (existing) {
+        return prev.map(p => p.menuId === menuItem.id ? { ...p, quantity } : p);
+      }
+      return [...prev, { menuId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity }];
+    });
+  };
+
+  return {
+    menuItems,
+    cart,
+    setCart,
+    addToCart,
+    myOrder,
+    submitOrder,
+    enterPaymentMode,
+    remainingTime,
+    isExpired
   };
 };
