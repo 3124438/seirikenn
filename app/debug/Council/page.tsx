@@ -1,8 +1,11 @@
-// ＃生徒会用管理画面 (app/admin/super/page.tsx)
+// app/debug/Council/page.tsx
 "use client";
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAdminLogic, convertGoogleDriveLink } from "./logic";
 import { QueueListView, ReservationListView } from "./components";
+
+// --- Constants (仕様書 Section 2) ---
+const LIMIT_TIME_MINUTES = 30;
 
 export default function SuperAdminPage() {
   const {
@@ -21,6 +24,75 @@ export default function SuperAdminPage() {
     toggleReservationStatus, cancelReservation, updateQueueStatus,
     targetShop
   } = useAdminLogic();
+
+  // --- Order System Local State (本来は logic.ts で管理すべきもの) ---
+  const [orderTab, setOrderTab] = useState<'monitor' | 'menu'>('monitor');
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  // リアルタイム監視用タイマー (Module 2)
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000); // 1分更新
+    return () => clearInterval(timer);
+  }, []);
+
+  // --- Mock Handlers (logic.ts 未実装分をUI動作確認用に定義) ---
+  const handleUpdateSystemMode = (mode: string) => {
+    console.log(`[Mock] Update System Mode to: ${mode}`);
+    // 実装時は Firestore の updateDoc を呼ぶ
+  };
+
+  const handleCompletePayment = (orderId: string) => {
+    console.log(`[Mock] Complete Payment for: ${orderId}`);
+    // status: paying -> completed
+  };
+
+  const handleForceCancel = (orderId: string, items: any[]) => {
+    console.log(`[Mock] Force Cancel: ${orderId}`, items);
+    // status: force_cancelled, stock increment
+  };
+
+  const handleCancelOrder = (orderId: string, items: any[]) => {
+    console.log(`[Mock] Normal Cancel: ${orderId}`, items);
+    // status: cancelled, stock increment
+  };
+
+  const handleUpdateMenuStock = (itemId: string, newStock: number) => {
+     console.log(`[Mock] Update Stock: ${itemId} -> ${newStock}`);
+  };
+
+  // --- Order System Helper Functions ---
+
+  // 遅延判定ロジック (Module 2)
+  const isOrderDelayed = (createdAt: any) => {
+    if (!createdAt) return false;
+    const created = new Date(createdAt.seconds * 1000 || createdAt); // Firestore Timestamp or Date
+    const diffMs = currentTime.getTime() - created.getTime();
+    return diffMs > LIMIT_TIME_MINUTES * 60 * 1000;
+  };
+
+  const getDelayMinutes = (createdAt: any) => {
+    const created = new Date(createdAt.seconds * 1000 || createdAt);
+    const diffMs = currentTime.getTime() - created.getTime();
+    return Math.floor(diffMs / (60 * 1000)) - LIMIT_TIME_MINUTES;
+  };
+
+  // ソートロジック (Module 2)
+  const getSortedOrders = (orders: any[]) => {
+    if (!orders) return [];
+    return [...orders].sort((a, b) => {
+      // 1. Status: paying (最優先)
+      if (a.status === 'paying' && b.status !== 'paying') return -1;
+      if (a.status !== 'paying' && b.status === 'paying') return 1;
+      
+      // 2. Status: ordered (古い順)
+      if (a.status === 'ordered' && b.status === 'ordered') {
+         return (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0);
+      }
+      
+      // その他 (completed, cancelled)
+      return 0;
+    });
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
@@ -81,7 +153,7 @@ export default function SuperAdminPage() {
 
                   {/* ★ 運用モード選択スイッチ */}
                   <div className="bg-gray-900 p-3 rounded border border-gray-600 mb-3">
-                      <label className="text-xs text-gray-400 mb-2 block font-bold">運用モード:</label>
+                      <label className="text-xs text-gray-400 mb-2 block font-bold">運用モード (予約/Queue):</label>
                       <div className="flex gap-4">
                           <label className={`flex items-center gap-2 cursor-pointer p-2 rounded w-1/2 justify-center border ${!isQueueMode ? 'bg-blue-900 border-blue-500' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
                               <input type="radio" name="mode" checked={!isQueueMode} onChange={() => setIsQueueMode(false)} className="hidden" />
@@ -159,14 +231,18 @@ export default function SuperAdminPage() {
         {!expandedShopId && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {attractions.map(shop => {
-                    // 検索ヒット判定（予約 or キュー）
-                    let hasUser = false;
+                    // 検索ヒット判定（予約 or キュー or オーダー）
+                    const hitInRes = shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
+                    const hitInQueue = shop.queue?.some((q:any) => q.userId?.includes(searchUserId.toUpperCase()) || q.ticketId?.includes(searchUserId.toUpperCase()));
+                    const hitInOrders = shop.orders?.some((o:any) => o.ticketId?.includes(searchUserId.toUpperCase()));
+                    
+                    const hasUser = searchUserId && (hitInRes || hitInQueue || hitInOrders);
+
+                    // 表示用カウント
                     let totalCount = 0;
                     if (shop.isQueueMode) {
-                        hasUser = searchUserId && shop.queue?.some((t:any) => t.userId?.includes(searchUserId.toUpperCase()));
                         totalCount = shop.queue?.filter((t:any) => ['waiting', 'ready'].includes(t.status)).length || 0;
                     } else {
-                        hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
                         totalCount = shop.reservations?.length || 0;
                     }
 
@@ -192,6 +268,8 @@ export default function SuperAdminPage() {
                                             <span className="text-[10px] bg-purple-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">並び順</span> :
                                             <span className="text-[10px] bg-blue-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">予約制</span>
                                         }
+                                        {/* オーダー有効表示 */}
+                                        {shop.menu?.length > 0 && <span className="text-[10px] bg-orange-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">Order</span>}
                                     </div>
                                 </div>
                             </div>
@@ -240,7 +318,170 @@ export default function SuperAdminPage() {
                             </div>
                         )}
 
-                        {/* ★ ここから条件分岐：予約制 or 順番待ち制 */}
+                        {/* ========== NEW: ORDER SYSTEM MODULES ========== */}
+                        <div className="border border-orange-700/50 rounded-xl bg-gray-900/50 overflow-hidden">
+                            <div className="bg-orange-900/20 p-3 border-b border-orange-700/50 flex justify-between items-center">
+                                <h3 className="font-bold text-orange-400 flex items-center gap-2">
+                                    🛒 Order System (Beta)
+                                    {targetShop.systemMode === 'open' && <span className="text-[10px] bg-green-500 text-black px-2 rounded-full animate-pulse">LIVE</span>}
+                                </h3>
+                                <div className="flex bg-gray-800 rounded p-1 gap-1">
+                                    <button 
+                                        onClick={() => setOrderTab('monitor')}
+                                        className={`text-xs px-3 py-1 rounded ${orderTab === 'monitor' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    >
+                                        👀 Monitor
+                                    </button>
+                                    <button 
+                                        onClick={() => setOrderTab('menu')}
+                                        className={`text-xs px-3 py-1 rounded ${orderTab === 'menu' ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    >
+                                        🍔 Menu
+                                    </button>
+                                </div>
+                            </div>
+
+                            {orderTab === 'monitor' && (
+                                <div className="p-4">
+                                    {/* Module 2: Dashboard */}
+                                    <div className="flex gap-2 mb-4 overflow-x-auto pb-2">
+                                        {(['ordered', 'paying', 'completed', 'cancelled', 'force_cancelled'] as const).map(status => {
+                                             const count = targetShop.orders?.filter((o: any) => o.status === status).length || 0;
+                                             return (
+                                                 <div key={status} className="bg-gray-800 px-3 py-1 rounded text-xs border border-gray-700 whitespace-nowrap">
+                                                     <span className="text-gray-400 uppercase mr-2">{status}</span>
+                                                     <span className="font-bold text-white">{count}</span>
+                                                 </div>
+                                             )
+                                        })}
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {getSortedOrders(targetShop.orders).map((order: any) => {
+                                            const isPaying = order.status === 'paying';
+                                            const isDelayed = isOrderDelayed(order.createdAt) && order.status === 'ordered';
+                                            
+                                            if (['cancelled', 'force_cancelled'].includes(order.status)) return null; // 簡易表示のため非表示
+
+                                            return (
+                                                <div key={order.orderId} className={`relative p-3 rounded-lg border flex flex-col md:flex-row justify-between items-start md:items-center gap-3 transition-all
+                                                    ${isPaying ? 'bg-yellow-900/20 border-yellow-500 animate-pulse-slow shadow-[0_0_15px_rgba(234,179,8,0.2)]' : ''}
+                                                    ${isDelayed ? 'bg-red-900/10 border-red-500' : 'bg-gray-800 border-gray-700'}
+                                                    ${order.status === 'completed' ? 'opacity-50 grayscale' : ''}
+                                                `}>
+                                                    <div>
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <span className="font-mono font-bold text-lg text-white">{order.ticketId}</span>
+                                                            <span className={`text-[10px] px-1.5 rounded font-bold uppercase 
+                                                                ${isPaying ? 'bg-yellow-500 text-black' : ''}
+                                                                ${order.status === 'ordered' ? 'bg-blue-600 text-white' : ''}
+                                                                ${order.status === 'completed' ? 'bg-green-600 text-white' : ''}
+                                                            `}>
+                                                                {order.status}
+                                                            </span>
+                                                            {isDelayed && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded font-bold animate-pulse">DELAY (+{getDelayMinutes(order.createdAt)}min)</span>}
+                                                        </div>
+                                                        <div className="text-xs text-gray-400">
+                                                            {order.cartItems?.map((item: any) => `${item.name} x${item.quantity}`).join(', ')}
+                                                        </div>
+                                                        <div className="font-bold text-white mt-1">¥{order.totalAmount?.toLocaleString()}</div>
+                                                    </div>
+
+                                                    <div className="flex gap-2 w-full md:w-auto">
+                                                        {isPaying && (
+                                                            <button 
+                                                                onClick={() => handleCompletePayment(order.orderId)}
+                                                                className="flex-1 md:flex-none bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded text-xs shadow-lg transform active:scale-95 transition"
+                                                            >
+                                                                💰 会計完了
+                                                            </button>
+                                                        )}
+                                                        {isDelayed && order.status === 'ordered' && (
+                                                            <button 
+                                                                onClick={() => handleForceCancel(order.orderId, order.cartItems)}
+                                                                className="flex-1 md:flex-none bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded text-xs border border-red-400 shadow-lg"
+                                                            >
+                                                                🗑️ 強制キャンセル (在庫戻し)
+                                                            </button>
+                                                        )}
+                                                        {order.status === 'ordered' && !isDelayed && (
+                                                            <button 
+                                                                onClick={() => handleCancelOrder(order.orderId, order.cartItems)}
+                                                                className="bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs py-2 px-3 rounded"
+                                                            >
+                                                                キャンセル
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {(!targetShop.orders || targetShop.orders.length === 0) && (
+                                            <div className="text-center text-gray-500 py-8">No Active Orders</div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {orderTab === 'menu' && (
+                                <div className="p-4">
+                                    {/* Module 1: System Mode & Menu */}
+                                    <div className="mb-6 bg-gray-800 p-3 rounded border border-gray-700">
+                                        <label className="text-xs text-gray-400 block mb-2 font-bold">System Status (全体モード切替)</label>
+                                        <div className="flex gap-2">
+                                            {['closed', 'pre_open', 'open'].map(mode => (
+                                                <button
+                                                    key={mode}
+                                                    onClick={() => handleUpdateSystemMode(mode)}
+                                                    className={`flex-1 py-2 rounded text-xs font-bold uppercase transition border
+                                                        ${targetShop.systemMode === mode 
+                                                            ? (mode === 'open' ? 'bg-orange-600 border-orange-500 text-white' : 'bg-blue-600 border-blue-500 text-white')
+                                                            : 'bg-gray-900 border-gray-700 text-gray-500 hover:bg-gray-800'
+                                                        }
+                                                    `}
+                                                >
+                                                    {mode.replace('_', ' ')}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <h4 className="text-xs font-bold text-gray-400 mb-2 uppercase">Menu Items</h4>
+                                    <div className="space-y-2">
+                                        {targetShop.menu?.map((item: any) => (
+                                            <div key={item.id} className="flex items-center gap-3 bg-gray-800 p-3 rounded border border-gray-700">
+                                                <div className="flex-1">
+                                                    <div className="font-bold text-sm">{item.name}</div>
+                                                    <div className="text-xs text-gray-400">¥{item.price}</div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="text-center">
+                                                        <div className="text-[10px] text-gray-500">Stock</div>
+                                                        <input 
+                                                            type="number" 
+                                                            defaultValue={item.stock} 
+                                                            onBlur={(e) => handleUpdateMenuStock(item.id, Number(e.target.value))}
+                                                            className="w-16 bg-gray-900 border border-gray-600 rounded p-1 text-center text-sm" 
+                                                        />
+                                                    </div>
+                                                    <div className="text-center">
+                                                        <div className="text-[10px] text-gray-500">Limit</div>
+                                                        <div className="text-sm font-mono bg-gray-900 px-2 py-1 rounded border border-gray-700">{item.limit}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <button className="w-full py-2 border border-dashed border-gray-600 text-gray-400 rounded hover:bg-gray-800 text-xs transition">
+                                            + Add New Item (Not Implemented)
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        {/* ============================================== */}
+
+
+                        {/* ★ 既存機能: 条件分岐：予約制 or 順番待ち制 */}
                         {targetShop.isQueueMode ? (
                             // --- 順番待ち制のUI ---
                             <div>
