@@ -3,7 +3,7 @@ import {
   collection, onSnapshot, doc, updateDoc, deleteDoc, addDoc, setDoc,
   serverTimestamp, query, orderBy, increment 
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase'; // プロジェクトの設定に合わせて変更してください
+import { db } from '@/firebase'; // プロジェクトの設定に合わせて変更してください
 
 // --- Constants ---
 const LIMIT_TIME_MINUTES = 30;
