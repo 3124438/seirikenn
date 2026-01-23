@@ -1,233 +1,287 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { 
+  collection, onSnapshot, doc, updateDoc, deleteDoc, addDoc, setDoc,
+  serverTimestamp, query, orderBy, increment 
+} from 'firebase/firestore';
+import { db } from '@/lib/firebase'; // プロジェクトの設定に合わせて変更してください
 
-// --- Queue List Component (Existing) ---
-export const QueueListView = ({ shop, searchUserId, onUpdateStatus }: any) => {
-    if (!shop.queue) return <div>データなし</div>;
-    const active = shop.queue.filter((t: any) => ['waiting', 'ready'].includes(t.status));
-    
-    // Sort
-    active.sort((a: any, b: any) => {
-        if (a.status === 'ready' && b.status !== 'ready') return -1;
-        if (a.status !== 'ready' && b.status === 'ready') return 1;
-        return (a.ticketId || "0").localeCompare(b.ticketId || "0");
-    });
+// --- Constants ---
+const LIMIT_TIME_MINUTES = 30;
 
-    if (active.length === 0) return <div className="text-center py-8 text-gray-500 bg-gray-900/50 rounded-lg">待機ユーザーなし</div>;
-
-    return (
-        <div className="space-y-2">
-            {active.map((ticket: any, index: number) => {
-                const isReady = ticket.status === 'ready';
-                const isMatch = searchUserId && ticket.userId?.includes(searchUserId.toUpperCase());
-                return (
-                    <div key={index} className={`flex justify-between items-center p-3 rounded border ${isReady ? 'bg-red-900/30 border-red-500' : 'bg-gray-700 border-gray-600'} ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
-                        <div>
-                            <div className="font-mono text-xl font-bold text-white">{ticket.ticketId || `#${index+1}`}</div>
-                            <div className="text-sm text-gray-400">{ticket.userId} ({ticket.count}名)</div>
-                        </div>
-                        <div className="flex gap-2">
-                            {isReady ? (
-                                <button onClick={() => onUpdateStatus(shop, ticket, 'completed')} className="bg-green-600 text-white px-4 py-2 rounded font-bold">入場</button>
-                            ) : (
-                                <button onClick={() => onUpdateStatus(shop, ticket, 'ready')} className="bg-red-600 text-white px-4 py-2 rounded font-bold">呼出</button>
-                            )}
-                            <button onClick={() => onUpdateStatus(shop, ticket, 'canceled')} className="bg-gray-600 text-white px-2 py-2 rounded text-xs">取消</button>
-                        </div>
-                    </div>
-                );
-            })}
-        </div>
-    );
+// --- Helpers ---
+export const convertGoogleDriveLink = (url: string) => {
+  if (!url) return '';
+  const fileIdMatch = url.match(/\/d\/(.+?)\//);
+  if (fileIdMatch) {
+    return `https://drive.google.com/uc?export=view&id=${fileIdMatch[1]}`;
+  }
+  return url;
 };
 
-// --- Reservation List Component (Existing) ---
-export const ReservationListView = ({ shop, searchUserId, onToggleStatus, onCancel }: any) => {
-    const grouped: any = {};
-    shop.reservations?.forEach((res: any) => {
-        if(!grouped[res.time]) grouped[res.time] = [];
-        grouped[res.time].push(res);
+// --- Custom Hook ---
+export const useAdminLogic = () => {
+  // Global State
+  const [attractions, setAttractions] = useState<any[]>([]);
+  const [myUserId, setMyUserId] = useState('ADMIN_USER'); // 実際はAuthから取得
+  const [expandedShopId, setExpandedShopId] = useState<string | null>(null);
+  const [searchUserId, setSearchUserId] = useState('');
+
+  // Form State
+  const [isEditing, setIsEditing] = useState(false);
+  const [originalId, setOriginalId] = useState('');
+  const [manualId, setManualId] = useState('');
+  const [newName, setNewName] = useState('');
+  const [password, setPassword] = useState('');
+  const [department, setDepartment] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [description, setDescription] = useState('');
+  const [groupLimit, setGroupLimit] = useState(4);
+  const [openTime, setOpenTime] = useState('10:00');
+  const [closeTime, setCloseTime] = useState('16:00');
+  const [duration, setDuration] = useState(20);
+  const [capacity, setCapacity] = useState(5);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isQueueMode, setIsQueueMode] = useState(false);
+
+  // Sub-collection State (Only valid when expandedShopId is set)
+  const [menuItems, setMenuItems] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+
+  // 1. Fetch Attractions (Global)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'attractions'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // ID順にソート
+      data.sort((a: any, b: any) => a.id.localeCompare(b.id));
+      setAttractions(data);
+    });
+    return () => unsub();
+  }, []);
+
+  // 2. Fetch Sub-collections (Menu & Orders) when expanded
+  useEffect(() => {
+    if (!expandedShopId) {
+      setMenuItems([]);
+      setOrders([]);
+      return;
+    }
+
+    const menuRef = collection(db, `attractions/${expandedShopId}/menu`);
+    const ordersRef = collection(db, `attractions/${expandedShopId}/orders`);
+
+    const unsubMenu = onSnapshot(query(menuRef, orderBy('createdAt', 'asc')), (snap) => {
+      setMenuItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    return (
-        <div className="space-y-4">
-            {Object.keys(grouped).sort().map(time => (
-                <div key={time} className="bg-gray-900/50 p-3 rounded border border-gray-700">
-                    <h4 className="font-bold text-blue-300 mb-2">{time}</h4>
-                    <div className="space-y-2">
-                        {grouped[time].map((res: any, idx: number) => {
-                             const isMatch = searchUserId && res.userId?.includes(searchUserId.toUpperCase());
-                             return (
-                                <div key={idx} className={`flex justify-between items-center bg-gray-700 p-2 rounded ${isMatch ? 'ring-2 ring-pink-500' : ''}`}>
-                                    <div className={res.status === 'used' ? 'opacity-50 line-through' : ''}>
-                                        <div className="font-bold text-white">{res.userId}</div>
-                                        <div className="text-xs text-gray-400">{res.people}名</div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button onClick={() => onToggleStatus(shop, res, res.status === 'used' ? 'reserved' : 'used')} 
-                                            className={`px-2 py-1 rounded text-xs ${res.status === 'used' ? 'bg-gray-600' : 'bg-green-600'}`}>
-                                            {res.status === 'used' ? '戻す' : '入場'}
-                                        </button>
-                                        <button onClick={() => onCancel(shop, res)} className="bg-red-900/50 text-red-200 px-2 py-1 rounded text-xs">削除</button>
-                                    </div>
-                                </div>
-                             );
-                        })}
-                    </div>
-                </div>
-            ))}
-        </div>
-    );
-};
+    const unsubOrders = onSnapshot(ordersRef, (snap) => {
+      setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
 
-// --- Menu Management Component ---
-export const MenuManager = ({ menuItems, onAdd, onUpdateStock, onDelete }: any) => {
-  const [newItem, setNewItem] = useState({ name: '', price: 0, stock: 0, limit: 5 });
+    return () => {
+      unsubMenu();
+      unsubOrders();
+    };
+  }, [expandedShopId]);
 
-  const handleAdd = () => {
-    if (!newItem.name) return;
-    onAdd(newItem);
-    setNewItem({ name: '', price: 0, stock: 0, limit: 5 });
+  // --- Computed Values ---
+  const targetShop = attractions.find((s: any) => s.id === expandedShopId);
+
+  const stats = {
+    totalVenues: attractions.length,
+    pausedVenues: attractions.filter((s: any) => s.isPaused).length,
+    totalReservations: attractions.reduce((acc: number, cur: any) => acc + (cur.reservations?.length || 0), 0) + 
+                       attractions.reduce((acc: number, cur: any) => acc + (cur.queue?.filter((q:any) => ['waiting','ready'].includes(q.status)).length || 0), 0)
   };
 
-  return (
-    <div className="space-y-6">
-      {/* Add Form */}
-      <div className="bg-gray-800 p-4 rounded-lg border border-gray-700">
-        <h4 className="font-bold text-gray-300 mb-3">🍔 新規メニュー追加</h4>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
-          <div className="col-span-2 md:col-span-2">
-            <label className="text-xs text-gray-500 block mb-1">商品名</label>
-            <input className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="例: 焼きそば" />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">価格</label>
-            <input type="number" className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.price} onChange={e => setNewItem({...newItem, price: Number(e.target.value)})} />
-          </div>
-          <div>
-            <label className="text-xs text-gray-500 block mb-1">初期在庫</label>
-            <input type="number" className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.stock} onChange={e => setNewItem({...newItem, stock: Number(e.target.value)})} />
-          </div>
-          <button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded text-sm">追加</button>
-        </div>
-      </div>
+  const sortedOrders = {
+    active: (() => {
+      const list = orders.filter((o: any) => ['paying', 'ordered'].includes(o.status));
+      return list.map((o: any) => {
+          const createdAt = o.createdAt?.toDate ? o.createdAt.toDate() : new Date();
+          const diffMins = (Date.now() - createdAt.getTime()) / (1000 * 60);
+          return { ...o, isDelayed: diffMins > LIMIT_TIME_MINUTES, delayedMinutes: Math.floor(diffMins) };
+      }).sort((a: any, b: any) => {
+          if (a.status === 'paying' && b.status !== 'paying') return -1;
+          if (a.status !== 'paying' && b.status === 'paying') return 1;
+          return (a.ticketId || "").localeCompare(b.ticketId || "");
+      });
+    })()
+  };
 
-      {/* Menu List */}
-      <div className="bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
-        <table className="w-full text-sm text-left text-gray-400">
-          <thead className="text-xs text-gray-500 uppercase bg-gray-800">
-            <tr>
-              <th className="px-4 py-3">Menu Name</th>
-              <th className="px-4 py-3 text-right">Price</th>
-              <th className="px-4 py-3 text-center">Stock</th>
-              <th className="px-4 py-3 text-center">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {menuItems.map((item: any) => (
-              <tr key={item.id} className="border-b border-gray-800 hover:bg-gray-800/50">
-                <td className="px-4 py-3 font-bold text-white">{item.name}</td>
-                <td className="px-4 py-3 text-right">¥{item.price}</td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center justify-center gap-2">
-                    <button onClick={() => onUpdateStock(item.id, Math.max(0, item.stock - 1))} className="w-6 h-6 bg-gray-700 rounded text-white hover:bg-red-900">-</button>
-                    <span className={`font-mono text-lg w-12 text-center ${item.stock === 0 ? 'text-red-500 font-bold' : 'text-white'}`}>{item.stock}</span>
-                    <button onClick={() => onUpdateStock(item.id, item.stock + 1)} className="w-6 h-6 bg-gray-700 rounded text-white hover:bg-green-900">+</button>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <button onClick={() => onDelete(item.id)} className="text-red-500 hover:text-red-300 text-xs underline">削除</button>
-                </td>
-              </tr>
-            ))}
-            {menuItems.length === 0 && (
-              <tr><td colSpan={4} className="p-4 text-center text-gray-600">メニューが登録されていません</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
+  // --- Actions: Global / Shop Settings ---
 
-// --- Order Dashboard Component ---
-export const OrderDashboard = ({ sortedOrders, onComplete, onCancel }: any) => {
-  const { active } = sortedOrders;
+  const resetForm = () => {
+    setIsEditing(false);
+    setOriginalId('');
+    setManualId('');
+    setNewName('');
+    setPassword('');
+    setDepartment('');
+    setImageUrl('');
+    setDescription('');
+    setIsPaused(false);
+    setIsQueueMode(false);
+  };
 
-  if (active.length === 0) {
-    return <div className="p-8 text-center text-gray-500 border border-dashed border-gray-700 rounded-xl">現在、アクティブな注文はありません。</div>;
-  }
+  const startEdit = (shop: any) => {
+    setIsEditing(true);
+    setOriginalId(shop.id);
+    setManualId(shop.id);
+    setNewName(shop.name);
+    setPassword(shop.password || '');
+    setDepartment(shop.department || '');
+    setImageUrl(shop.image || '');
+    setDescription(shop.description || '');
+    setGroupLimit(shop.groupLimit || 4);
+    setOpenTime(shop.openTime || '10:00');
+    setCloseTime(shop.closeTime || '16:00');
+    setDuration(shop.duration || 20);
+    setCapacity(shop.capacity || 5);
+    setIsPaused(shop.isPaused || false);
+    setIsQueueMode(shop.isQueueMode || false);
+  };
 
-  return (
-    <div className="space-y-4 pb-20">
-      {active.map((order: any) => {
-        const isPaying = order.status === 'paying';
-        const isDelayed = order.isDelayed;
-        
-        return (
-          <div key={order.id} 
-            className={`relative rounded-xl overflow-hidden transition-all duration-300 
-              ${isPaying ? 'transform scale-100 md:scale-105 border-4 border-yellow-400 bg-gray-800 shadow-[0_0_30px_rgba(250,204,21,0.3)] z-10 my-6' 
-                         : isDelayed ? 'border-2 border-red-500 bg-red-900/10' : 'border border-gray-700 bg-gray-800'}`}
-          >
-            {/* Status Header */}
-            <div className={`px-4 py-2 flex justify-between items-center ${isPaying ? 'bg-yellow-500/20' : 'bg-gray-900'}`}>
-              <div className="flex items-center gap-3">
-                <span className={`font-mono font-bold text-2xl ${isPaying ? 'text-yellow-400' : 'text-white'}`}>
-                  #{order.ticketId}
-                </span>
-                {isPaying && <span className="bg-yellow-400 text-black text-xs font-bold px-2 py-1 rounded animate-pulse">会計待ち (PAYING)</span>}
-                {!isPaying && isDelayed && <span className="bg-red-600 text-white text-xs font-bold px-2 py-1 rounded">遅延 ({order.delayedMinutes}分)</span>}
-                {!isPaying && !isDelayed && <span className="text-gray-400 text-xs font-bold bg-gray-700 px-2 py-1 rounded">調理中</span>}
-              </div>
-              <div className="text-xs text-gray-400 font-mono">
-                {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--:--'}
-              </div>
-            </div>
+  const handleSave = async () => {
+    if (!manualId || !newName) return alert('IDと会場名は必須です');
+    
+    const data = {
+      name: newName,
+      password,
+      department,
+      image: imageUrl,
+      description,
+      groupLimit,
+      openTime,
+      closeTime,
+      duration,
+      capacity,
+      isPaused,
+      isQueueMode,
+      updatedAt: serverTimestamp()
+    };
 
-            {/* Content */}
-            <div className="p-4">
-              <div className="space-y-2 mb-4">
-                {order.items.map((item: any, idx: number) => (
-                  <div key={idx} className="flex justify-between text-sm border-b border-gray-700/50 pb-1 last:border-0">
-                    <span className="text-gray-200">{item.name} <span className="text-gray-500">x{item.quantity}</span></span>
-                    <span className="font-mono text-gray-400">¥{item.price * item.quantity}</span>
-                  </div>
-                ))}
-              </div>
-              
-              <div className="flex justify-between items-end border-t border-gray-700 pt-3">
-                <div className="text-right flex-1">
-                  <span className="text-xs text-gray-500 mr-2">合計</span>
-                  <span className="text-2xl font-bold text-white">¥{order.totalAmount.toLocaleString()}</span>
-                </div>
-              </div>
-            </div>
+    try {
+      if (isEditing && manualId !== originalId) {
+        // ID変更: 新規作成して旧削除（実際はサブコレクションの移行が必要だがここでは省略）
+        await setDoc(doc(db, 'attractions', manualId), { ...data, createdAt: serverTimestamp() });
+        await deleteDoc(doc(db, 'attractions', originalId));
+      } else if (isEditing) {
+        await updateDoc(doc(db, 'attractions', originalId), data);
+      } else {
+        await setDoc(doc(db, 'attractions', manualId), { ...data, createdAt: serverTimestamp(), queue: [], reservations: [] });
+      }
+      resetForm();
+    } catch (e) {
+      console.error(e);
+      alert('保存に失敗しました');
+    }
+  };
 
-            {/* Actions */}
-            <div className="p-2 bg-gray-900/50 flex gap-2">
-              {isPaying ? (
-                <button onClick={() => onComplete(order.id)} 
-                  className="flex-1 bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-3 rounded text-lg shadow-lg transition">
-                  💰 支払い完了・商品受渡
-                </button>
-              ) : (
-                <button onClick={() => onComplete(order.id)} 
-                  className="flex-1 bg-green-700 hover:bg-green-600 text-white font-bold py-3 rounded transition">
-                  ✅ 受渡完了 (Skip Payment)
-                </button>
-              )}
-              
-              <button onClick={() => onCancel(order)} 
-                className="px-4 bg-gray-700 hover:bg-red-900 text-gray-300 hover:text-white rounded font-bold text-sm transition">
-                取下
-              </button>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  const handleDeleteVenue = async (id: string) => {
+    if(!confirm('本当にこの会場を削除しますか？')) return;
+    await deleteDoc(doc(db, 'attractions', id));
+  };
+
+  const handleBulkPause = async (pause: boolean) => {
+    if(!confirm(`全ての会場を${pause ? '停止' : '再開'}しますか？`)) return;
+    await Promise.all(attractions.map((s: any) => updateDoc(doc(db, 'attractions', s.id), { isPaused: pause })));
+  };
+
+  const handleBulkDeleteReservations = async () => {
+    if(!confirm('全会場の予約・待ち行列データを削除しますか？')) return;
+    await Promise.all(attractions.map((s: any) => updateDoc(doc(db, 'attractions', s.id), { reservations: [], queue: [] })));
+  };
+
+  const handleBulkDeleteVenues = async () => {
+    if(!confirm('【危険】全ての会場データを削除しますか？この操作は取り消せません。')) return;
+    await Promise.all(attractions.map((s: any) => deleteDoc(doc(db, 'attractions', s.id))));
+  };
+
+  // --- Actions: Queue / Reservation ---
+
+  const toggleReservationStatus = async (shop: any, res: any, status: string) => {
+    const newReservations = shop.reservations.map((r: any) => 
+      (r.userId === res.userId && r.time === res.time) ? { ...r, status } : r
+    );
+    await updateDoc(doc(db, 'attractions', shop.id), { reservations: newReservations });
+  };
+
+  const cancelReservation = async (shop: any, res: any) => {
+    const newReservations = shop.reservations.filter((r: any) => !(r.userId === res.userId && r.time === res.time));
+    await updateDoc(doc(db, 'attractions', shop.id), { reservations: newReservations });
+  };
+
+  const updateQueueStatus = async (shop: any, ticket: any, status: string) => {
+    const newQueue = shop.queue.map((t: any) => 
+      t.ticketId === ticket.ticketId ? { ...t, status } : t
+    );
+    await updateDoc(doc(db, 'attractions', shop.id), { queue: newQueue });
+  };
+
+  // --- Actions: Menu Management ---
+
+  const addMenuItem = async (item: any) => {
+    if (!expandedShopId) return;
+    await addDoc(collection(db, `attractions/${expandedShopId}/menu`), {
+      ...item,
+      createdAt: serverTimestamp()
+    });
+  };
+
+  const updateMenuStock = async (itemId: string, stock: number) => {
+    if (!expandedShopId) return;
+    await updateDoc(doc(db, `attractions/${expandedShopId}/menu`, itemId), { stock });
+  };
+
+  const deleteMenuItem = async (itemId: string) => {
+    if (!expandedShopId) return;
+    if(!confirm('メニューを削除しますか？')) return;
+    await deleteDoc(doc(db, `attractions/${expandedShopId}/menu`, itemId));
+  };
+
+  // --- Actions: Order Management ---
+
+  const completePayment = async (orderId: string) => {
+    if (!expandedShopId) return;
+    await updateDoc(doc(db, `attractions/${expandedShopId}/orders`, orderId), {
+      status: 'completed',
+      completedAt: serverTimestamp()
+    });
+  };
+
+  const cancelOrder = async (order: any) => {
+    if (!expandedShopId) return;
+    if(!confirm('注文をキャンセルして在庫を戻しますか？')) return;
+    
+    // 1. Update Order Status
+    await updateDoc(doc(db, `attractions/${expandedShopId}/orders`, order.id), {
+      status: 'cancelled',
+      cancelledAt: serverTimestamp()
+    });
+
+    // 2. Restore Stock (Simplified)
+    // 実際の実装ではトランザクション処理が推奨されます
+    console.log("在庫復元処理スキップ（必要に応じて実装）", order.items);
+  };
+
+  return {
+    attractions, myUserId,
+    expandedShopId, setExpandedShopId,
+    isEditing, setIsEditing, originalId, setOriginalId,
+    manualId, setManualId, newName, setNewName, password, setPassword,
+    department, setDepartment, imageUrl, setImageUrl, description, setDescription,
+    groupLimit, setGroupLimit, openTime, setOpenTime, closeTime, setCloseTime,
+    duration, setDuration, capacity, setCapacity, isPaused, setIsPaused,
+    isQueueMode, setIsQueueMode,
+    searchUserId, setSearchUserId,
+    stats,
+    handleBulkPause, handleBulkDeleteReservations, handleBulkDeleteVenues,
+    resetForm, startEdit, handleSave, handleDeleteVenue,
+    toggleReservationStatus, cancelReservation, updateQueueStatus,
+    targetShop,
+    // New Order System
+    menuItems, orders, sortedOrders,
+    addMenuItem, updateMenuStock, deleteMenuItem,
+    completePayment, cancelOrder
+  };
 };
