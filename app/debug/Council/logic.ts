@@ -1,363 +1,390 @@
-// app/debug/Council/logic.ts
+//app/debug/Council/logic.ts
 import { useState, useEffect, useMemo } from "react";
+// 階層に合わせてパスを調整してください
 import { db, auth } from "../../../firebase"; 
 import { 
   collection, 
   onSnapshot, 
   doc, 
-  addDoc, 
-  updateDoc, 
+  setDoc, 
   deleteDoc, 
-  runTransaction, 
-  serverTimestamp, 
-  Timestamp, 
-  query, 
-  orderBy 
+  updateDoc, 
+  addDoc,
+  serverTimestamp,
+  query,
+  orderBy,
+  runTransaction,
+  Timestamp,
+  getDoc
 } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
-// --- 2. 共通設定 (Constants) ---
+// --- Constants ---
 export const LIMIT_TIME_MINUTES = 30;
 
-// --- 型定義 ---
-export type OrderStatus = 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
-
+// --- Interfaces ---
 export interface MenuItem {
   id: string;
   name: string;
   price: number;
   stock: number;
-  limit: number; // 1人あたりの購入制限
-  displayOrder: number;
-  isSoldOut: boolean;
+  limit: number;
+  createdAt: Timestamp;
 }
 
-export interface CartItem {
-  menuId: string;
-  name: string;
-  price: number;
-  quantity: number;
+export interface OrderItem {
+    menuId: string;
+    name: string;
+    price: number;
+    quantity: number;
 }
 
 export interface Order {
   id: string;
-  ticketId: string; // 表示用チケット番号
-  items: CartItem[];
+  ticketId: string; // 6桁連番 "000001"
+  items: OrderItem[];
   totalAmount: number;
-  status: OrderStatus;
+  status: 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
   createdAt: Timestamp;
   userId: string;
+  isDelayed?: boolean;     // フロントエンド計算用
+  delayedMinutes?: number; // フロントエンド表示用
 }
 
-// --- Module 1 & 2: Admin Logic [設定・管理・監視] ---
-export const useAdminLogic = () => {
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [systemMode, setSystemMode] = useState<string>("open"); // preparation, open, closed
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
-
-  // 初期化・認証
-  useEffect(() => {
-    signInAnonymously(auth).catch((e) => console.error(e));
-
-    // タイマー更新 (遅延判定用)
-    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Menu監視
-  useEffect(() => {
-    const q = query(collection(db, "menu"), orderBy("displayOrder", "asc"));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setMenuItems(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
-    });
-    return () => unsub();
-  }, []);
-
-  // Orders監視 (subscribeToOrders)
-  useEffect(() => {
-    // 完了済み以外または直近のもの取得が望ましいが、ここでは全件取得してJS側でフィルタリング
-    const q = query(collection(db, "orders"), orderBy("createdAt", "desc"));
-    const unsub = onSnapshot(q, (snapshot) => {
-      setOrders(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Order)));
-    });
-    return () => unsub();
-  }, []);
-
-  // --- Module 1: メニュー管理機能 ---
-  const updateSystemMode = async (mode: string) => {
-    // システム設定ドキュメントがあると仮定、なければローカルステートのみ
-    setSystemMode(mode); 
-  };
-
-  const addMenuItem = async (item: Omit<MenuItem, "id">) => {
-    await addDoc(collection(db, "menu"), item);
-  };
-
-  const updateMenuItem = async (id: string, data: Partial<MenuItem>) => {
-    await updateDoc(doc(db, "menu", id), data);
-  };
-
-  const deleteMenuItem = async (id: string) => {
-    if(!confirm("商品を削除しますか？")) return;
-    await deleteDoc(doc(db, "menu", id));
-  };
-
-  // --- Module 2: オーダー処理機能 ---
-  
-  // ソート・レンダリングロジック (sortAndRenderOrders)
-  const processedOrders = useMemo(() => {
-    const activeOrders = orders.filter(o => !['cancelled', 'force_cancelled'].includes(o.status));
-    
-    return activeOrders.sort((a, b) => {
-      // 1. Status: paying (最優先)
-      if (a.status === 'paying' && b.status !== 'paying') return -1;
-      if (a.status !== 'paying' && b.status === 'paying') return 1;
-
-      // 2. Status: ordered (古い順 = createdAt昇順)
-      if (a.status === 'ordered' && b.status === 'ordered') {
-        return a.createdAt.toMillis() - b.createdAt.toMillis();
-      }
-
-      // 3. Status: completed (新しい順 = createdAt降順)
-      if (a.status === 'completed' && b.status === 'completed') {
-        return b.createdAt.toMillis() - a.createdAt.toMillis();
-      }
-      
-      return 0;
-    }).map(order => {
-      // 遅延判定ロジック
-      const elapsedMinutes = (currentTime.getTime() - order.createdAt.toDate().getTime()) / (1000 * 60);
-      const isDelayed = order.status === 'ordered' && elapsedMinutes > LIMIT_TIME_MINUTES;
-      
-      return {
-        ...order,
-        isDelayed,
-        delayedMinutes: Math.floor(elapsedMinutes - LIMIT_TIME_MINUTES)
-      };
-    });
-  }, [orders, currentTime]);
-
-  // 支払い完了処理 (completePayment)
-  const completePayment = async (orderId: string) => {
-    await updateDoc(doc(db, "orders", orderId), { status: "completed" });
-  };
-
-  // 通常キャンセル (cancelOrder) - 在庫戻し付き
-  const cancelOrder = async (orderId: string, items: CartItem[]) => {
-    if(!confirm("注文をキャンセルし、在庫を戻しますか？")) return;
-    await performCancelTransaction(orderId, items, "cancelled");
-  };
-
-  // 強制キャンセル (forceCancelOrder) - 在庫戻し付き
-  const forceCancelOrder = async (orderId: string, items: CartItem[]) => {
-    if(!confirm("期限切れのため強制キャンセルしますか？")) return;
-    await performCancelTransaction(orderId, items, "force_cancelled");
-  };
-
-  // 共通トランザクション処理 (在庫復元)
-  const performCancelTransaction = async (orderId: string, items: CartItem[], newStatus: OrderStatus) => {
-    try {
-      await runTransaction(db, async (transaction) => {
-        // オーダー状態更新
-        const orderRef = doc(db, "orders", orderId);
-        transaction.update(orderRef, { status: newStatus });
-
-        // 在庫復元 (Atomic Increment)
-        for (const item of items) {
-          const menuRef = doc(db, "menu", item.menuId);
-          const menuDoc = await transaction.get(menuRef);
-          if (menuDoc.exists()) {
-            const currentStock = menuDoc.data().stock || 0;
-            transaction.update(menuRef, { stock: currentStock + item.quantity });
-          }
-        }
-      });
-      alert("キャンセル処理が完了しました。");
-    } catch (e) {
-      console.error("Cancel Transaction Failed", e);
-      alert("キャンセル処理に失敗しました。");
-    }
-  };
-
-  return {
-    menuItems,
-    orders: processedOrders, // UI側ではこれを使用
-    systemMode,
-    updateSystemMode,
-    addMenuItem,
-    updateMenuItem,
-    deleteMenuItem,
-    completePayment,
-    cancelOrder,
-    forceCancelOrder,
-    LIMIT_TIME_MINUTES
-  };
+// GoogleドライブのURLを自動変換する関数
+export const convertGoogleDriveLink = (url: string) => {
+  if (!url) return "";
+  if (!url.includes("drive.google.com") || url.includes("export=view")) {
+    return url;
+  }
+  try {
+    const id = url.split("/d/")[1].split("/")[0];
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  } catch (e) {
+    return url;
+  }
 };
 
-// --- Module 3 & 4: User Logic [注文・チケット] ---
-export const useUserLogic = () => {
+export const useAdminLogic = () => {
+  const [attractions, setAttractions] = useState<any[]>([]);
+  const [myUserId, setMyUserId] = useState("");
+
+  // --- UI State ---
+  const [expandedShopId, setExpandedShopId] = useState<string | null>(null); 
+  const [isEditing, setIsEditing] = useState(false);
+  const [originalId, setOriginalId] = useState<string | null>(null);
+  
+  // --- New Order System Data ---
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [myOrder, setMyOrder] = useState<Order | null>(null);
-  const [remainingTime, setRemainingTime] = useState<string>("");
-  const [isExpired, setIsExpired] = useState(false);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
-  // ユーザーID管理
-  const myUserId = useMemo(() => {
-    let stored = localStorage.getItem("order_system_user_id");
+  // --- Shop Form State (Venue CRUD) ---
+  const [manualId, setManualId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [password, setPassword] = useState("");
+  const [department, setDepartment] = useState("");
+  const [imageUrl, setImageUrl] = useState("");
+  const [description, setDescription] = useState("");
+  
+  // Legacy or Basic Settings
+  const [groupLimit, setGroupLimit] = useState(4);
+  const [openTime, setOpenTime] = useState("10:00");
+  const [closeTime, setCloseTime] = useState("15:00");
+  const [duration, setDuration] = useState(20);
+  const [capacity, setCapacity] = useState(3);
+  const [isPaused, setIsPaused] = useState(false);
+  
+  // フラグ: 注文システムを利用するかどうか
+  const [isQueueMode, setIsQueueMode] = useState(true); 
+
+  // Initial Setup
+  useEffect(() => {
+    signInAnonymously(auth).catch((e) => console.error(e));
+    
+    // Admin ID generation / retrieval
+    let stored = localStorage.getItem("bunkasai_user_id");
     if (!stored) {
-      stored = "U_" + Math.random().toString(36).substr(2, 9);
-      localStorage.setItem("order_system_user_id", stored);
+        stored = "ADMIN_" + Math.random().toString(36).substring(2, 9).toUpperCase();
+        localStorage.setItem("bunkasai_user_id", stored);
     }
-    return stored;
-  }, []);
+    setMyUserId(stored);
 
-  // 初期データロード
-  useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
-    
-    // Menu購読
-    const unsubMenu = onSnapshot(query(collection(db, "menu"), orderBy("displayOrder")), (snap) => {
-      setMenuItems(snap.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
+    // Fetch Attractions (Shops)
+    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
+      const newData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAttractions(newData);
     });
 
-    return () => unsubMenu();
+    // Clock for delay check
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+
+    return () => {
+        unsub();
+        clearInterval(timer);
+    };
   }, []);
 
-  // 自分のオーダー監視 (monitorOrderStatus)
+  // --- Sub-collection Listeners (Menu & Orders) ---
+  // 店舗が選択されたときのみ購読を開始する
   useEffect(() => {
-    if (!myOrder && !localStorage.getItem("current_order_id")) return;
-    
-    const orderId = myOrder?.id || localStorage.getItem("current_order_id");
-    if (!orderId) return;
+    if (!expandedShopId) {
+        setMenuItems([]);
+        setOrders([]);
+        return;
+    }
 
-    const unsubOrder = onSnapshot(doc(db, "orders", orderId), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = { id: docSnap.id, ...docSnap.data() } as Order;
-        setMyOrder(data);
-        localStorage.setItem("current_order_id", data.id); // 永続化
-
-        // 完了またはキャンセル時の処理
-        if (data.status === 'completed') {
-            // UI側で「購入ありがとうございます」へ遷移
-        }
-      } else {
-        // ドキュメントが消えた場合など
-        setMyOrder(null);
-        localStorage.removeItem("current_order_id");
-      }
+    // 1. Menu Listener
+    const menuRef = collection(db, "attractions", expandedShopId, "menu");
+    const qMenu = query(menuRef, orderBy("createdAt", "asc"));
+    const unsubMenu = onSnapshot(qMenu, (snap) => {
+        setMenuItems(snap.docs.map(d => ({ id: d.id, ...d.data() } as MenuItem)));
     });
-    
-    return () => unsubOrder();
-  }, [myOrder?.id]);
 
-  // チケットタイマー制御 (displayTicket UI logic)
-  useEffect(() => {
-    if (!myOrder || myOrder.status === 'completed' || myOrder.status === 'cancelled') return;
+    // 2. Orders Listener
+    const ordersRef = collection(db, "attractions", expandedShopId, "orders");
+    const qOrders = query(ordersRef, orderBy("createdAt", "asc")); // 基本は古い順で取得し、メモリ内でソート
+    const unsubOrders = onSnapshot(qOrders, (snap) => {
+        const now = new Date();
+        const fetchedOrders = snap.docs.map(d => {
+            const data = d.data();
+            // 遅延判定ロジック
+            const created = data.createdAt?.toDate ? data.createdAt.toDate() : new Date();
+            const elapsedMinutes = Math.floor((now.getTime() - created.getTime()) / (1000 * 60));
+            
+            return {
+                id: d.id,
+                ...data,
+                isDelayed: data.status === 'ordered' && elapsedMinutes > LIMIT_TIME_MINUTES,
+                delayedMinutes: Math.max(0, elapsedMinutes - LIMIT_TIME_MINUTES)
+            } as Order;
+        });
+        setOrders(fetchedOrders);
+    });
 
-    const interval = setInterval(() => {
-      const createdTime = myOrder.createdAt.toDate().getTime();
-      const now = new Date().getTime();
-      const limitMs = LIMIT_TIME_MINUTES * 60 * 1000;
-      const elapsed = now - createdTime;
-      const remaining = limitMs - elapsed;
+    return () => {
+        unsubMenu();
+        unsubOrders();
+    };
+  }, [expandedShopId]);
 
-      if (remaining <= 0) {
-        setIsExpired(true);
-        setRemainingTime("00:00");
-      } else {
-        setIsExpired(false);
-        const m = Math.floor(remaining / 60000);
-        const s = Math.floor((remaining % 60000) / 1000);
-        setRemainingTime(`${m}:${s.toString().padStart(2, '0')}`);
-      }
-    }, 1000);
+  // --- Sorting Logic (Order Dashboard) ---
+  const sortedOrders = useMemo(() => {
+      // 完了・キャンセル済みは基本的に除外、またはリストの下部に配置する運用を想定
+      // ここでは仕様に基づき「Status: completed / cancelled は基本非表示」とするが、
+      // 履歴確認用に別リストが必要な場合はUI側で制御可能にするため、全データを返す形にする
+      // ただし、アクティブなオーダーのソート順は仕様通りにする。
 
-    return () => clearInterval(interval);
-  }, [myOrder]);
+      const activeOrders = orders.filter(o => ['ordered', 'paying'].includes(o.status));
+      const historyOrders = orders.filter(o => !['ordered', 'paying'].includes(o.status));
 
-  // --- Module 3: 注文・在庫確保トランザクション (submitOrder) ---
-  const submitOrder = async () => {
-    if (cart.length === 0) return;
-
-    try {
-      await runTransaction(db, async (transaction) => {
-        const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-        
-        // 1. 最新在庫確認
-        for (const item of cart) {
-          const menuRef = doc(db, "menu", item.menuId);
-          const menuDoc = await transaction.get(menuRef);
+      const sortedActive = activeOrders.sort((a, b) => {
+          // 1. Priority: Status 'paying' (Top)
+          if (a.status === 'paying' && b.status !== 'paying') return -1;
+          if (a.status !== 'paying' && b.status === 'paying') return 1;
           
-          if (!menuDoc.exists()) throw new Error("商品が存在しません");
-          
-          const currentStock = menuDoc.data().stock;
-          if (currentStock < item.quantity) {
-            throw new Error(`「${item.name}」がタッチの差で売り切れました`);
-          }
-          
-          // 2. 在庫減算
-          transaction.update(menuRef, { stock: currentStock - item.quantity });
-        }
-
-        // 3. 注文作成
-        const newOrderRef = doc(collection(db, "orders"));
-        const newOrderData = {
-          ticketId: Math.floor(1000 + Math.random() * 9000).toString(), // 簡易チケット番号
-          items: cart,
-          totalAmount: totalAmount,
-          status: "ordered",
-          createdAt: serverTimestamp(),
-          userId: myUserId
-        };
-        transaction.set(newOrderRef, newOrderData);
-        
-        // ローカルステート更新用にIDを保存 (Snapshotが拾うまでの繋ぎ)
-        localStorage.setItem("current_order_id", newOrderRef.id);
+          // 2. Priority: Ordered (FIFO / Ticket ID ASC)
+          return (a.ticketId || "").localeCompare(b.ticketId || "");
       });
-      
-      // 成功後、カートクリア
-      setCart([]);
-      return true; // 画面遷移用
-    } catch (e: any) {
-      alert(e.message || "注文処理中にエラーが発生しました");
-      return false;
-    }
-  };
 
-  // --- Module 4: 支払いフロー (enterPaymentMode) ---
-  const enterPaymentMode = async () => {
-    if (!myOrder) return;
-    try {
-      await updateDoc(doc(db, "orders", myOrder.id), { status: "paying" });
-    } catch (e) {
-      console.error(e);
-      alert("通信エラーが発生しました");
-    }
-  };
+      return { active: sortedActive, history: historyOrders };
+  }, [orders, currentTime]); // currentTimeが変わると遅延判定は変わらないが、再レンダリングのトリガーとして
 
-  // カート操作ヘルパー
-  const addToCart = (menuItem: MenuItem, quantity: number) => {
-    // limitチェックなどはUI側で行う前提だが、ここでもガード可能
-    setCart(prev => {
-      const existing = prev.find(p => p.menuId === menuItem.id);
-      if (existing) {
-        return prev.map(p => p.menuId === menuItem.id ? { ...p, quantity } : p);
+  // --- Module 1: Menu Management Functions ---
+
+  const addMenuItem = async (itemData: Omit<MenuItem, "id" | "createdAt">) => {
+      if (!expandedShopId) return;
+      try {
+          await addDoc(collection(db, "attractions", expandedShopId, "menu"), {
+              ...itemData,
+              createdAt: serverTimestamp()
+          });
+      } catch (e) {
+          console.error(e);
+          alert("メニュー追加に失敗しました");
       }
-      return [...prev, { menuId: menuItem.id, name: menuItem.name, price: menuItem.price, quantity }];
-    });
   };
+
+  const updateMenuStock = async (menuId: string, newStock: number) => {
+      if (!expandedShopId) return;
+      try {
+          await updateDoc(doc(db, "attractions", expandedShopId, "menu", menuId), {
+              stock: Number(newStock)
+          });
+      } catch (e) {
+          console.error(e);
+      }
+  };
+
+  const deleteMenuItem = async (menuId: string) => {
+      if (!expandedShopId || !confirm("このメニューを削除しますか？")) return;
+      try {
+          await deleteDoc(doc(db, "attractions", expandedShopId, "menu", menuId));
+      } catch (e) {
+          console.error(e);
+          alert("削除に失敗しました");
+      }
+  };
+
+  // --- Module 2: Order Status Management Functions ---
+
+  const completePayment = async (orderId: string) => {
+      if (!expandedShopId) return;
+      if (!confirm("支払いを完了し、商品を引き渡しますか？")) return;
+      
+      try {
+          await updateDoc(doc(db, "attractions", expandedShopId, "orders", orderId), {
+              status: "completed"
+          });
+      } catch (e) {
+          console.error("Payment Error:", e);
+          alert("処理に失敗しました");
+      }
+  };
+
+  const cancelOrder = async (order: Order, isForce: boolean = false) => {
+      if (!expandedShopId) return;
+      const msg = isForce 
+        ? "【強制キャンセル】\n在庫を戻し、注文を強制的に取り消しますか？"
+        : "注文をキャンセルし、在庫を戻しますか？";
+        
+      if (!confirm(msg)) return;
+
+      try {
+          await runTransaction(db, async (transaction) => {
+              // 1. Order Check
+              const orderRef = doc(db, "attractions", expandedShopId, "orders", order.id);
+              const orderSnap = await transaction.get(orderRef);
+              if (!orderSnap.exists()) throw "Order does not exist!";
+
+              // 2. Update Order Status
+              const newStatus = isForce ? "force_cancelled" : "cancelled";
+              transaction.update(orderRef, { status: newStatus });
+
+              // 3. Restore Stock (Atomic Increment)
+              for (const item of order.items) {
+                  const menuRef = doc(db, "attractions", expandedShopId, "menu", item.menuId);
+                  const menuDoc = await transaction.get(menuRef);
+                  if (menuDoc.exists()) {
+                      const currentStock = menuDoc.data().stock || 0;
+                      transaction.update(menuRef, { stock: currentStock + item.quantity });
+                  }
+              }
+          });
+      } catch (e) {
+          console.error("Cancel Error:", e);
+          alert("キャンセル処理（在庫復元）に失敗しました");
+      }
+  };
+
+  // --- Venue Management (CRUD) ---
+
+  const resetForm = () => {
+    setIsEditing(false);
+    setOriginalId(null);
+    setManualId(""); setNewName(""); setPassword("");
+    setDepartment(""); setImageUrl(""); setDescription("");
+    setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
+    setDuration(20); setCapacity(3); setIsPaused(false);
+    setIsQueueMode(true); 
+  };
+
+  const startEdit = (shop: any) => {
+    setIsEditing(true);
+    setOriginalId(shop.id);
+    setExpandedShopId(shop.id); // 編集開始と同時に詳細展開
+    
+    // Form Set
+    setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
+    setDepartment(shop.department || "");
+    setImageUrl(shop.imageUrl || "");
+    setDescription(shop.description || "");
+    setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
+    setCloseTime(shop.closeTime); setDuration(shop.duration);
+    setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
+    setIsQueueMode(shop.isQueueMode !== undefined ? shop.isQueueMode : true);
+    
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSave = async () => {
+    if (!manualId || !newName || !password) return alert("必須項目(ID, 会場名, Pass)を入力してください");
+    if (password.length !== 5) return alert("パスワードは5桁です");
+
+    if (isEditing && originalId !== manualId) {
+        if (attractions.some(s => s.id === manualId)) return alert(`ID「${manualId}」は既に存在します。`);
+    }
+
+    const data: any = {
+      name: newName, password, groupLimit,
+      department, imageUrl, description,
+      openTime, closeTime, duration, capacity, isPaused, 
+      isQueueMode
+    };
+
+    try {
+        if (isEditing && originalId && manualId !== originalId) {
+            if(!confirm(`会場IDを「${originalId}」から「${manualId}」に変更しますか？`)) return;
+            // Note: ID変更はサブコレクションの移動が必要になるため本来複雑ですが、
+            // ここでは簡易的にドキュメントの再作成としています（サブコレクションは失われるリスクがあります）
+            alert("IDを変更すると、以前のIDに関連付けられた注文データやメニューは見えなくなります。");
+            await setDoc(doc(db, "attractions", manualId), data);
+            await deleteDoc(doc(db, "attractions", originalId));
+            setExpandedShopId(manualId);
+        } else {
+            await setDoc(doc(db, "attractions", manualId), data, { merge: true });
+            if(isEditing) setExpandedShopId(manualId);
+        }
+        alert(isEditing ? "更新しました" : "作成しました");
+        if (!isEditing) resetForm();
+    } catch(e) { console.error(e); alert("エラーが発生しました"); }
+  };
+
+  const handleDeleteVenue = async (id: string) => {
+    if (!confirm("本当に会場を削除しますか？\n(注意: サブコレクションのデータは手動で削除されるまで残る場合があります)")) return;
+    await deleteDoc(doc(db, "attractions", id));
+    setExpandedShopId(null);
+  };
+
+  const handleBulkPause = async (shouldPause: boolean) => {
+      const actionName = shouldPause ? "一斉停止" : "一斉再開";
+      if(!confirm(`全ての会場を「${actionName}」しますか？`)) return;
+      try {
+          const promises = attractions.map(shop => 
+              updateDoc(doc(db, "attractions", shop.id), { isPaused: shouldPause })
+          );
+          await Promise.all(promises);
+          alert(`${actionName}が完了しました。`);
+      } catch(e) { console.error(e); alert("エラーが発生しました。"); }
+  };
+
+  const targetShop = attractions.find(s => s.id === expandedShopId);
 
   return {
+    attractions, myUserId,
+    expandedShopId, setExpandedShopId,
+    isEditing, setIsEditing, originalId,
+    
+    // Forms
+    manualId, setManualId, newName, setNewName, password, setPassword,
+    department, setDepartment, imageUrl, setImageUrl, description, setDescription,
+    groupLimit, setGroupLimit, openTime, setOpenTime, closeTime, setCloseTime,
+    duration, setDuration, capacity, setCapacity, isPaused, setIsPaused,
+    isQueueMode, setIsQueueMode,
+    
+    // Actions
+    handleBulkPause,
+    resetForm, startEdit, handleSave, handleDeleteVenue,
+    targetShop,
+
+    // --- New System Exports ---
     menuItems,
-    cart,
-    setCart,
-    addToCart,
-    myOrder,
-    submitOrder,
-    enterPaymentMode,
-    remainingTime,
-    isExpired
+    orders, 
+    sortedOrders,
+    addMenuItem,
+    updateMenuStock,
+    deleteMenuItem,
+    completePayment,
+    cancelOrder
   };
 };
