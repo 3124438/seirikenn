@@ -81,12 +81,18 @@ export const ReservationListView = ({ shop, searchUserId, onToggleStatus, onCanc
 
 // --- Menu Management Component ---
 export const MenuManager = ({ menuItems, onAdd, onUpdateStock, onDelete }: any) => {
-  const [newItem, setNewItem] = useState({ name: '', price: 0, stock: 0, limit: 5 });
+  // 修正: 入力しやすいように、一時的に空文字('')を許容します
+  const [newItem, setNewItem] = useState({ name: '', price: '', stock: '' });
 
   const handleAdd = () => {
     if (!newItem.name) return;
-    onAdd(newItem);
-    setNewItem({ name: '', price: 0, stock: 0, limit: 5 });
+    onAdd({
+        name: newItem.name,
+        price: Number(newItem.price || 0), // 送信時に数値へ変換
+        stock: Number(newItem.stock || 0), // 送信時に数値へ変換
+        limit: 5
+    });
+    setNewItem({ name: '', price: '', stock: '' }); // フォームをリセット
   };
 
   return (
@@ -97,20 +103,35 @@ export const MenuManager = ({ menuItems, onAdd, onUpdateStock, onDelete }: any) 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
           <div className="col-span-2 md:col-span-2">
             <label className="text-xs text-gray-500 block mb-1">商品名</label>
-            <input className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.name} onChange={e => setNewItem({...newItem, name: e.target.value})} placeholder="例: 焼きそば" />
+            <input className="w-full bg-gray-700 p-2 rounded text-sm text-white border border-gray-600 focus:border-blue-500 outline-none" 
+              value={newItem.name} 
+              onChange={e => setNewItem({...newItem, name: e.target.value})} 
+              placeholder="例: 焼きそば" 
+            />
           </div>
           <div>
-            <label className="text-xs text-gray-500 block mb-1">価格</label>
-            <input type="number" className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.price} onChange={e => setNewItem({...newItem, price: Number(e.target.value)})} />
+            <label className="text-xs text-gray-500 block mb-1">価格 (円)</label>
+            <input 
+              type="number" 
+              min="0"
+              className="w-full bg-gray-700 p-2 rounded text-sm text-white border border-gray-600 focus:border-blue-500 outline-none" 
+              value={newItem.price} 
+              onChange={e => setNewItem({...newItem, price: e.target.value})} // ここでは文字列のまま保存
+              placeholder="0"
+            />
           </div>
           <div>
-            <label className="text-xs text-gray-500 block mb-1">初期在庫</label>
-            <input type="number" className="w-full bg-gray-700 p-2 rounded text-sm text-white" 
-              value={newItem.stock} onChange={e => setNewItem({...newItem, stock: Number(e.target.value)})} />
+            <label className="text-xs text-gray-500 block mb-1">初期在庫 (個)</label>
+            <input 
+              type="number" 
+              min="0"
+              className="w-full bg-gray-700 p-2 rounded text-sm text-white border border-gray-600 focus:border-blue-500 outline-none" 
+              value={newItem.stock} 
+              onChange={e => setNewItem({...newItem, stock: e.target.value})} // ここでは文字列のまま保存
+              placeholder="0"
+            />
           </div>
-          <button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded text-sm">追加</button>
+          <button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded text-sm transition">追加</button>
         </div>
       </div>
 
@@ -129,12 +150,12 @@ export const MenuManager = ({ menuItems, onAdd, onUpdateStock, onDelete }: any) 
             {menuItems.map((item: any) => (
               <tr key={item.id} className="border-b border-gray-800 hover:bg-gray-800/50">
                 <td className="px-4 py-3 font-bold text-white">{item.name}</td>
-                <td className="px-4 py-3 text-right">¥{item.price}</td>
+                <td className="px-4 py-3 text-right">¥{Number(item.price).toLocaleString()}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-center gap-2">
-                    <button onClick={() => onUpdateStock(item.id, Math.max(0, item.stock - 1))} className="w-6 h-6 bg-gray-700 rounded text-white hover:bg-red-900">-</button>
+                    <button onClick={() => onUpdateStock(item.id, Math.max(0, Number(item.stock) - 1))} className="w-6 h-6 flex items-center justify-center bg-gray-700 rounded text-white hover:bg-red-900 transition">-</button>
                     <span className={`font-mono text-lg w-12 text-center ${item.stock === 0 ? 'text-red-500 font-bold' : 'text-white'}`}>{item.stock}</span>
-                    <button onClick={() => onUpdateStock(item.id, item.stock + 1)} className="w-6 h-6 bg-gray-700 rounded text-white hover:bg-green-900">+</button>
+                    <button onClick={() => onUpdateStock(item.id, Number(item.stock) + 1)} className="w-6 h-6 flex items-center justify-center bg-gray-700 rounded text-white hover:bg-green-900 transition">+</button>
                   </div>
                 </td>
                 <td className="px-4 py-3 text-center">
@@ -231,3 +252,4 @@ export const OrderDashboard = ({ sortedOrders, onComplete, onCancel }: any) => {
     </div>
   );
 };
+
