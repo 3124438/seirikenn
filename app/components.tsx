@@ -1,19 +1,31 @@
 // app/components.tsx
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import { QrReader } from 'react-qr-reader';
-import { Ticket, Shop, DraftBooking, MenuItem, CartItem, Order } from "./types";
+import { Ticket, Shop, DraftBooking } from "./types";
 
-// ========================================================================
-// Constants (仕様書 Section 2)
-// ========================================================================
+// --- 共通設定 (Constants) ---
 const LIMIT_TIME_MINUTES = 30;
 
-// ========================================================================
-// Existing Components (既存システム - 変更なし)
-// ========================================================================
+// --- 型定義の拡張 (本来は types.ts に記述すべきですが、このファイル内で完結させるため定義) ---
+export interface MenuItem {
+  id: string;
+  name: string;
+  price: number;
+  stock: number;
+  limit: number; // 1注文あたりの制限
+}
 
-// --- サブコンポーネント: 通知設定パネル ---
+export interface OrderTicket {
+  documentId: string;
+  ticketId: string; // 6桁連番 "000001"
+  items: { menuId: string; name: string; count: number; price: number }[];
+  totalAmount: number;
+  status: 'ordered' | 'paying' | 'completed' | 'cancelled';
+  createdAt: number; // Timestamp (millis)
+}
+
+// --- サブコンポーネント: 通知設定パネル (Existing) ---
 export const NotificationPanel = ({
   enableSound, setEnableSound,
   enableVibrate, setEnableVibrate,
@@ -48,7 +60,7 @@ export const NotificationPanel = ({
   </div>
 );
 
-// --- サブコンポーネント: チケットカード (既存の整理券システム用) ---
+// --- サブコンポーネント: チケットカード (Existing) ---
 export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket, onManualEnter: (t: Ticket) => void, onCancel: (t: Ticket) => void, onOpenQr: (t: Ticket) => void }) => {
   const isReady = t.status === 'ready';
   const cardClass = isReady 
@@ -68,7 +80,7 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
                {t.count}名
             </span>
           </h2>
-           
+          
           {t.isQueue ? (
             <div className="mt-2 p-2 bg-gray-100 rounded border border-gray-200 inline-block">
               <p className="text-xs text-gray-500 font-bold mb-1">整理券番号</p>
@@ -79,7 +91,7 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
           ) : (
             <p className="text-3xl font-bold text-blue-600 font-mono mt-1">{t.time}</p>
           )}
-           
+          
           {t.isQueue && (
               <div className="mt-2">
                   {isReady ? (
@@ -131,7 +143,7 @@ export const TicketCard = ({ t, onManualEnter, onCancel, onOpenQr }: { t: Ticket
   );
 };
 
-// --- サブコンポーネント: 店舗リスト ---
+// --- サブコンポーネント: 店舗リスト (Existing) ---
 export const ShopList = ({ shops, onSelect }: { shops: Shop[], onSelect: (s: Shop) => void }) => (
   <div className="space-y-3">
     <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">アトラクションを選ぶ</p>
@@ -163,11 +175,11 @@ export const ShopList = ({ shops, onSelect }: { shops: Shop[], onSelect: (s: Sho
   </div>
 );
 
-// --- サブコンポーネント: 店舗詳細・予約画面 ---
+// --- サブコンポーネント: 店舗詳細・予約画面 (Updated: オーダーボタンの追加) ---
 export const ShopDetail = ({ 
-  shop, activeTickets, onBack, onSelectTime, onJoinQueue 
+  shop, activeTickets, onBack, onSelectTime, onJoinQueue, onOpenMobileOrder 
 }: { 
-  shop: Shop, activeTickets: Ticket[], onBack: () => void, onSelectTime: (s: Shop, t: string) => void, onJoinQueue: (s: Shop) => void 
+  shop: Shop, activeTickets: Ticket[], onBack: () => void, onSelectTime: (s: Shop, t: string) => void, onJoinQueue: (s: Shop) => void, onOpenMobileOrder?: (s: Shop) => void 
 }) => {
   return (
     <div className="bg-white rounded-xl shadow-sm border overflow-hidden pb-10">
@@ -200,12 +212,30 @@ export const ShopDetail = ({
                 </div>
             )}
 
+            {/* モバイルオーダー対応店舗の場合のボタン */}
+            {onOpenMobileOrder && (
+              <div className="mb-8">
+                <button 
+                  onClick={() => onOpenMobileOrder(shop)}
+                  className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 rounded-xl shadow-lg border border-blue-700 flex items-center justify-between group"
+                >
+                  <div className="text-left">
+                    <p className="text-xs font-bold text-blue-200 mb-1">並ばずに注文・在庫確保</p>
+                    <p className="text-xl font-bold">📱 モバイルオーダー</p>
+                  </div>
+                  <span className="text-2xl group-hover:translate-x-1 transition">→</span>
+                </button>
+              </div>
+            )}
+
+            <h3 className="text-sm font-bold text-gray-500 mb-3 border-b pb-1">アトラクション利用・予約</h3>
+
             {shop.isPaused ? (
                 <p className="text-red-500 font-bold mb-4 bg-red-100 p-3 rounded text-center">現在 受付停止中です</p>
             ) : (
                 <>
                     {shop.isQueueMode ? (
-                       <div className="text-center py-6">
+                       <div className="text-center py-4">
                           <div className="mb-6">
                             <p className="text-gray-500 text-sm font-bold mb-2">現在の待ち状況</p>
                             <div className="flex justify-center gap-4">
@@ -254,7 +284,254 @@ export const ShopDetail = ({
   );
 };
 
-// --- サブコンポーネント: 予約確認モーダル ---
+// --- NEW Component: ユーザー向けオーダーパネル (Module 1/Userside) ---
+export const ShopOrderPanel = ({
+  menu, onOrder, onBack
+}: {
+  menu: MenuItem[], onOrder: (items: { item: MenuItem, count: number }[]) => void, onBack: () => void
+}) => {
+  const [cart, setCart] = useState<{ [id: string]: number }>({});
+
+  const updateCount = (id: string, delta: number, limit: number, stock: number) => {
+    setCart(prev => {
+      const current = prev[id] || 0;
+      const next = Math.max(0, Math.min(current + delta, limit, stock));
+      return { ...prev, [id]: next };
+    });
+  };
+
+  const totalAmount = menu.reduce((sum, item) => sum + (item.price * (cart[item.id] || 0)), 0);
+  const totalCount = Object.values(cart).reduce((a, b) => a + b, 0);
+
+  return (
+    <div className="flex flex-col h-full bg-gray-50">
+      <div className="bg-white border-b p-4 flex items-center gap-2 sticky top-0 z-10 shadow-sm">
+        <button onClick={onBack} className="p-2 bg-gray-100 rounded-full text-sm">✕</button>
+        <h2 className="font-bold text-lg">メニュー選択</h2>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
+        {menu.map(item => {
+          const count = cart[item.id] || 0;
+          const isSoldOut = item.stock <= 0;
+          return (
+            <div key={item.id} className={`bg-white p-4 rounded-xl border shadow-sm flex justify-between items-center ${isSoldOut ? "opacity-60" : ""}`}>
+              <div className="flex-1">
+                <h3 className="font-bold text-gray-800">{item.name}</h3>
+                <p className="text-sm text-gray-500">¥{item.price.toLocaleString()} / 残: {item.stock}</p>
+                {isSoldOut && <span className="text-red-500 text-xs font-bold">売り切れ</span>}
+              </div>
+              
+              {!isSoldOut && (
+                <div className="flex items-center gap-3 bg-gray-50 p-1 rounded-lg border">
+                  <button 
+                    onClick={() => updateCount(item.id, -1, item.limit, item.stock)}
+                    className="w-8 h-8 flex items-center justify-center bg-white border rounded shadow-sm text-lg font-bold text-blue-600 disabled:opacity-50"
+                    disabled={count === 0}
+                  >−</button>
+                  <span className="w-6 text-center font-bold text-lg">{count}</span>
+                  <button 
+                    onClick={() => updateCount(item.id, 1, item.limit, item.stock)}
+                    className="w-8 h-8 flex items-center justify-center bg-blue-600 border border-blue-600 rounded shadow-sm text-lg font-bold text-white disabled:opacity-50"
+                    disabled={count >= item.stock || count >= item.limit}
+                  >+</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="bg-white border-t p-4 fixed bottom-0 left-0 right-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+        <div className="flex justify-between items-end mb-2">
+           <span className="text-xs text-gray-500">{totalCount}点の商品</span>
+           <span className="text-xl font-bold text-blue-600">合計 ¥{totalAmount.toLocaleString()}</span>
+        </div>
+        <button 
+          disabled={totalCount === 0}
+          onClick={() => {
+            const items = menu.filter(m => (cart[m.id] || 0) > 0).map(m => ({ item: m, count: cart[m.id] }));
+            onOrder(items);
+          }}
+          className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg hover:bg-blue-500 disabled:bg-gray-300 disabled:text-gray-500 transition"
+        >
+          注文と在庫確保へ進む
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// --- NEW Component: 管理画面 - メニュー管理 (Module 1/Admin) ---
+export const AdminMenuManager = ({ 
+  menuItems, onAdd, onUpdateStock, onDelete 
+}: { 
+  menuItems: MenuItem[], 
+  onAdd: (item: Omit<MenuItem, 'id'>) => void, 
+  onUpdateStock: (id: string, delta: number) => void,
+  onDelete: (id: string) => void
+}) => {
+  const [newItem, setNewItem] = useState({ name: "", price: 0, stock: 10, limit: 5 });
+
+  const handleAdd = () => {
+    if (!newItem.name) return;
+    onAdd(newItem);
+    setNewItem({ name: "", price: 0, stock: 10, limit: 5 });
+  };
+
+  return (
+    <div className="bg-white rounded-lg shadow border p-4">
+      <h3 className="text-lg font-bold mb-4 flex items-center gap-2">📝 メニュー管理</h3>
+      
+      {/* 新規追加フォーム */}
+      <div className="grid grid-cols-2 gap-2 mb-4 bg-gray-50 p-3 rounded border">
+        <input 
+          placeholder="商品名" 
+          value={newItem.name} 
+          onChange={e => setNewItem({...newItem, name: e.target.value})}
+          className="col-span-2 p-2 border rounded"
+        />
+        <input 
+          type="number" placeholder="価格" 
+          value={newItem.price} 
+          onChange={e => setNewItem({...newItem, price: Number(e.target.value)})}
+          className="p-2 border rounded"
+        />
+        <input 
+          type="number" placeholder="初期在庫" 
+          value={newItem.stock} 
+          onChange={e => setNewItem({...newItem, stock: Number(e.target.value)})}
+          className="p-2 border rounded"
+        />
+        <button onClick={handleAdd} className="col-span-2 bg-green-600 text-white font-bold py-2 rounded shadow hover:bg-green-500">
+          追加
+        </button>
+      </div>
+
+      {/* メニューリスト */}
+      <div className="space-y-2">
+        {menuItems.map(item => (
+          <div key={item.id} className="flex items-center justify-between p-2 border rounded bg-white">
+            <div>
+              <p className="font-bold">{item.name}</p>
+              <p className="text-xs text-gray-500">¥{item.price} (限: {item.limit})</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center border rounded bg-gray-100">
+                <button onClick={() => onUpdateStock(item.id, -1)} className="px-2 py-1 text-red-500 font-bold hover:bg-gray-200">-</button>
+                <span className="w-10 text-center font-mono font-bold">{item.stock}</span>
+                <button onClick={() => onUpdateStock(item.id, 1)} className="px-2 py-1 text-blue-500 font-bold hover:bg-gray-200">+</button>
+              </div>
+              <button onClick={() => onDelete(item.id)} className="text-red-500 text-xs border border-red-200 p-1.5 rounded hover:bg-red-50">削除</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// --- NEW Component: 管理画面 - オーダー監視ダッシュボード (Module 2/Admin) ---
+export const AdminOrderDashboard = ({
+  orders, onCompletePayment, onCancelOrder
+}: {
+  orders: OrderTicket[], 
+  onCompletePayment: (ticketId: string) => void, 
+  onCancelOrder: (ticketId: string) => void
+}) => {
+  // ソートロジック: paying(会計待ち)を最優先、それ以外はticketId順(FIFO)
+  const sortedOrders = [...orders]
+    .filter(o => o.status !== 'completed' && o.status !== 'cancelled')
+    .sort((a, b) => {
+      if (a.status === 'paying' && b.status !== 'paying') return -1;
+      if (a.status !== 'paying' && b.status === 'paying') return 1;
+      // FIFO (Assuming ticketId is comparable string "000001")
+      return a.ticketId.localeCompare(b.ticketId);
+    });
+
+  const now = Date.now();
+
+  return (
+    <div className="bg-gray-100 min-h-screen p-4">
+      <h2 className="text-xl font-bold mb-4 text-gray-800 sticky top-0 bg-gray-100 z-20 py-2 border-b">
+        🍽️ オーダー監視 (Kitchen/Regi)
+      </h2>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {sortedOrders.map(order => {
+          const isPaying = order.status === 'paying';
+          const isDelayed = (now - order.createdAt) > (LIMIT_TIME_MINUTES * 60 * 1000);
+          
+          return (
+            <div 
+              key={order.ticketId} 
+              className={`
+                relative rounded-xl shadow-md p-4 transition-all duration-300
+                ${isPaying 
+                  ? "bg-white border-4 border-yellow-400 scale-105 z-10 shadow-2xl" // 会計待ちは拡大＆強調
+                  : "bg-white border border-gray-200"
+                }
+                ${!isPaying && isDelayed ? "border-2 border-red-500" : ""}
+              `}
+            >
+              <div className="flex justify-between items-start mb-2">
+                 <span className={`text-3xl font-black font-mono tracking-widest ${isPaying ? "text-yellow-600" : "text-gray-800"}`}>
+                   {order.ticketId}
+                 </span>
+                 <span className={`px-2 py-1 rounded text-xs font-bold text-white ${isPaying ? "bg-yellow-500" : "bg-blue-500"}`}>
+                   {isPaying ? "会計待ち" : "準備中"}
+                 </span>
+              </div>
+
+              <div className="space-y-1 mb-4 border-t border-b py-2 border-dashed border-gray-300">
+                {order.items.map((item, idx) => (
+                  <div key={idx} className="flex justify-between text-sm">
+                    <span className="font-bold text-gray-700">{item.name}</span>
+                    <span className="text-gray-500">x{item.count}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex justify-between items-end mb-4">
+                <span className="text-xs text-gray-400">計{order.items.length}点</span>
+                <span className="text-xl font-bold text-gray-900">¥{order.totalAmount.toLocaleString()}</span>
+              </div>
+
+              {isDelayed && !isPaying && (
+                 <p className="text-xs text-red-500 font-bold mb-2">⚠️ {LIMIT_TIME_MINUTES}分経過 - 遅延注意</p>
+              )}
+
+              <div className="grid grid-cols-2 gap-2">
+                 <button 
+                   onClick={() => onCancelOrder(order.ticketId)}
+                   className="py-2 bg-gray-100 text-gray-500 text-xs font-bold rounded hover:bg-gray-200"
+                 >
+                   キャンセル
+                 </button>
+                 <button 
+                   onClick={() => onCompletePayment(order.ticketId)}
+                   className={`py-2 text-white font-bold rounded shadow transition
+                     ${isPaying 
+                       ? "bg-yellow-500 hover:bg-yellow-600 animate-pulse" 
+                       : "bg-blue-600 hover:bg-blue-500"
+                     }`}
+                 >
+                   {isPaying ? "受渡・完了" : "会計へ呼出"}
+                 </button>
+              </div>
+            </div>
+          );
+        })}
+        
+        {sortedOrders.length === 0 && (
+          <p className="text-center text-gray-400 py-10 col-span-full">現在のアクティブな注文はありません</p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// --- サブコンポーネント: 予約確認モーダル (Existing) ---
 export const BookingModal = ({ 
   draftBooking, shopName, shopDepartment, peopleCount, setPeopleCount, onCancel, onConfirm 
 }: { 
@@ -294,7 +571,7 @@ export const BookingModal = ({
   </div>
 );
 
-// --- サブコンポーネント: QRリーダーモーダル ---
+// --- サブコンポーネント: QRリーダーモーダル (Existing) ---
 export const QrModal = ({ onScan, onClose }: { onScan: (result: any) => void, onClose: () => void }) => (
   <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
       <div className="w-full max-w-sm">
@@ -328,256 +605,3 @@ export const QrModal = ({ onScan, onClose }: { onScan: (result: any) => void, on
       </div>
   </div>
 );
-
-// ========================================================================
-// New Components (Order System / Module 3 & 4 Implementation)
-// ========================================================================
-
-// --- Module 3: Menu List Component ---
-export const MenuListView = ({ 
-  menuItems, cart, onUpdateCart, onSubmit 
-}: { 
-  menuItems: MenuItem[];
-  cart: CartItem[];
-  onUpdateCart: (item: MenuItem, delta: number) => void;
-  onSubmit: () => void;
-}) => {
-  const totalQuantity = cart.reduce((sum, item) => sum + item.quantity, 0);
-  const totalPrice = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-
-  return (
-    <div className="pb-24">
-      <h2 className="text-xl font-bold p-4 bg-white border-b sticky top-0 z-10 shadow-sm">
-        メニュー注文
-      </h2>
-      <div className="p-4 space-y-4">
-        {menuItems.map((item) => {
-          const cartItem = cart.find(c => c.id === item.id);
-          const quantity = cartItem ? cartItem.quantity : 0;
-          const isSoldOut = item.stock <= 0;
-          const isMaxLimit = quantity >= Math.min(item.limit, item.stock);
-
-          return (
-            <div key={item.id} className={`bg-white rounded-xl p-4 border shadow-sm flex gap-4 ${isSoldOut ? "opacity-60 bg-gray-50" : ""}`}>
-              {/* 画像エリア (Optional) */}
-              <div className="w-20 h-20 bg-gray-200 rounded-lg flex-shrink-0 flex items-center justify-center text-xs text-gray-400 overflow-hidden relative">
-                 {item.imageUrl ? <img src={item.imageUrl} className="w-full h-full object-cover" /> : "No Image"}
-                 {isSoldOut && <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white font-bold transform -rotate-12">SOLD OUT</div>}
-              </div>
-              
-              <div className="flex-1 flex flex-col justify-between">
-                <div>
-                  <h3 className="font-bold text-gray-800">{item.name}</h3>
-                  <p className="text-gray-500 text-sm">¥{item.price.toLocaleString()}</p>
-                  {item.limit < 99 && (
-                    <p className="text-xs text-orange-600 mt-1">お一人様 {item.limit}個まで</p>
-                  )}
-                </div>
-
-                {!isSoldOut && (
-                  <div className="flex items-center justify-end gap-3 mt-2">
-                    <button 
-                      onClick={() => onUpdateCart(item, -1)}
-                      disabled={quantity === 0}
-                      className="w-8 h-8 rounded-full bg-gray-100 border flex items-center justify-center text-lg font-bold text-gray-600 disabled:opacity-30"
-                    >
-                      -
-                    </button>
-                    <span className="font-bold w-6 text-center">{quantity}</span>
-                    <button 
-                      onClick={() => onUpdateCart(item, 1)}
-                      disabled={isMaxLimit}
-                      className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center text-lg font-bold disabled:bg-gray-300"
-                    >
-                      +
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Cart Summary / Submit Footer */}
-      {totalQuantity > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t shadow-2xl z-20 safe-area-bottom">
-           <div className="flex justify-between items-end mb-2">
-              <span className="text-sm font-bold text-gray-500">{totalQuantity}点の商品</span>
-              <span className="text-xl font-bold text-blue-600">合計 ¥{totalPrice.toLocaleString()}</span>
-           </div>
-           <button 
-             onClick={onSubmit}
-             className="w-full py-3 bg-blue-600 text-white font-bold rounded-xl shadow-md active:scale-95 transition"
-           >
-             注文を確定する (在庫確保)
-           </button>
-        </div>
-      )}
-    </div>
-  );
-};
-
-// --- Module 4: Order Timer Component ---
-const OrderTimer = ({ createdAt }: { createdAt: number }) => {
-  const [timeLeft, setTimeLeft] = useState<string>("");
-  const [isExpired, setIsExpired] = useState(false);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      // LIMIT_TIME_MINUTES (30分)
-      const expireTime = createdAt + (LIMIT_TIME_MINUTES * 60 * 1000);
-      const diff = expireTime - now;
-
-      if (diff <= 0) {
-        setTimeLeft("00:00");
-        setIsExpired(true);
-        clearInterval(interval);
-      } else {
-        const m = Math.floor(diff / 60000);
-        const s = Math.floor((diff % 60000) / 1000);
-        setTimeLeft(`${m}:${s.toString().padStart(2, '0')}`);
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [createdAt]);
-
-  if (isExpired) {
-    return <span className="text-red-600 font-bold">期限切れ</span>;
-  }
-  return <span className="font-mono text-xl text-blue-600 font-bold">{timeLeft}</span>;
-};
-
-// --- Module 4: Order Ticket & Payment View ---
-export const OrderTicketView = ({ 
-  order, onEnterPaymentMode, onBack 
-}: { 
-  order: Order;
-  onEnterPaymentMode: (id: string) => void;
-  onBack?: () => void;
-}) => {
-  const isPaying = order.status === 'paying';
-  const isCompleted = order.status === 'completed';
-  const isCancelled = order.status === 'cancelled' || order.status === 'force_cancelled';
-
-  // 1. 支払い画面 (提示モード)
-  if (isPaying) {
-    return (
-      <div className="fixed inset-0 bg-yellow-400 z-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in zoom-in duration-300">
-         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm border-4 border-black">
-            <h2 className="text-xl font-bold text-gray-500 mb-2">お支払い金額</h2>
-            <p className="text-5xl font-black text-black mb-8">¥{order.totalPrice.toLocaleString()}</p>
-            
-            <div className="border-t-2 border-dashed border-gray-300 py-6 my-4">
-              <p className="text-sm font-bold text-gray-500 mb-1">チケット番号</p>
-              <p className="text-6xl font-black tracking-widest text-blue-600">{order.ticketId}</p>
-            </div>
-
-            <div className="bg-yellow-100 text-yellow-800 p-4 rounded-lg font-bold text-sm animate-pulse">
-               スタッフにこの画面を<br/>ご提示ください
-            </div>
-         </div>
-         <p className="mt-8 text-yellow-900 font-bold opacity-75 text-sm">
-           ※支払い完了まで画面を閉じないでください
-         </p>
-      </div>
-    );
-  }
-
-  // 2. 完了画面
-  if (isCompleted) {
-    return (
-      <div className="p-8 text-center flex flex-col items-center justify-center min-h-[50vh]">
-        <div className="w-24 h-24 bg-green-100 text-green-600 rounded-full flex items-center justify-center text-4xl mb-6 shadow-sm">
-           ✓
-        </div>
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">受取完了</h2>
-        <p className="text-gray-500 mb-8">ご購入ありがとうございました！</p>
-        <button onClick={onBack} className="text-blue-600 font-bold underline">ホームへ戻る</button>
-      </div>
-    );
-  }
-
-  // 3. キャンセル/期限切れ画面
-  if (isCancelled) {
-    return (
-       <div className="p-8 text-center flex flex-col items-center justify-center min-h-[50vh]">
-        <div className="w-24 h-24 bg-gray-100 text-gray-400 rounded-full flex items-center justify-center text-4xl mb-6">
-           ✕
-        </div>
-        <h2 className="text-xl font-bold text-gray-800 mb-2">キャンセルされました</h2>
-        <p className="text-sm text-gray-500 mb-8">
-           {order.status === 'force_cancelled' 
-             ? "受取期限を過ぎたため、自動キャンセルされました。" 
-             : "この注文はキャンセルされています。"}
-        </p>
-        <button onClick={onBack} className="px-6 py-3 bg-gray-800 text-white rounded-lg font-bold">ホームへ戻る</button>
-      </div>
-    );
-  }
-
-  // 4. 注文確約・受取待ち画面 (Default: status == 'ordered')
-  return (
-    <div className="p-4 max-w-md mx-auto">
-       <div className="bg-white rounded-xl shadow-lg border overflow-hidden">
-          {/* Header */}
-          <div className="bg-blue-600 p-4 text-white text-center">
-             <p className="text-sm font-bold opacity-90 mb-1">注文確定済み</p>
-             <h2 className="text-2xl font-bold">商品受取待ち</h2>
-          </div>
-
-          {/* Timer Section */}
-          <div className="p-6 text-center border-b bg-blue-50">
-             <p className="text-xs font-bold text-gray-500 mb-1">受取期限まで残り</p>
-             <OrderTimer createdAt={order.createdAt} />
-             <p className="text-[10px] text-gray-400 mt-2">
-                ※期限を過ぎると自動キャンセルになる場合があります
-             </p>
-          </div>
-
-          {/* Order Details */}
-          <div className="p-6 space-y-4">
-             <div className="flex justify-between items-center">
-                <span className="font-bold text-gray-500">チケット番号</span>
-                <span className="font-mono text-2xl font-black">{order.ticketId}</span>
-             </div>
-             
-             <div className="border-t border-dashed my-4"></div>
-
-             <div className="space-y-2">
-                {order.items.map((item, idx) => (
-                   <div key={idx} className="flex justify-between text-sm">
-                      <span className="text-gray-700">{item.name} x{item.quantity}</span>
-                      <span className="font-bold">¥{(item.price * item.quantity).toLocaleString()}</span>
-                   </div>
-                ))}
-             </div>
-
-             <div className="border-t border-dashed my-4"></div>
-
-             <div className="flex justify-between items-center text-lg">
-                <span className="font-bold">合計金額</span>
-                <span className="font-bold text-blue-600">¥{order.totalPrice.toLocaleString()}</span>
-             </div>
-          </div>
-
-          {/* Action Button */}
-          <div className="p-4 bg-gray-50 border-t">
-             <button 
-               onClick={() => onEnterPaymentMode(order.id)}
-               className="w-full py-3 bg-green-600 hover:bg-green-500 text-white font-bold rounded-xl shadow-md transition flex items-center justify-center gap-2"
-             >
-               <span>💳</span> お支払いへ進む (スタッフ提示)
-             </button>
-             {onBack && (
-               <button onClick={onBack} className="w-full mt-3 text-sm text-gray-400 font-bold">
-                 ← 戻る
-               </button>
-             )}
-          </div>
-       </div>
-    </div>
-  );
-};
