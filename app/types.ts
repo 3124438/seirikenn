@@ -1,6 +1,5 @@
 // app/types.ts
 
-// --- 既存システム用型定義 (Legacy Support) ---
 export type Ticket = {
   uniqueKey: string;
   shopId: string;
@@ -15,6 +14,7 @@ export type Ticket = {
   peopleAhead?: number;
 };
 
+// ショップデータの型（anyを減らすために定義）
 export type Shop = {
   id: string;
   name: string;
@@ -38,39 +38,39 @@ export type DraftBooking = {
   maxPeople: number;
 };
 
-// --- 新オーダーシステム用型定義 (Specification Sec.3 & Modules) ---
+// --- 以下、仕様書に基づき追加された型定義 ---
 
-// ステータス定義 (Sec 3)
-export type OrderStatus = 'ordered' | 'paying' | 'completed' | 'cancelled' | 'force_cancelled';
+// Module 1: メニュー管理用
+export type MenuItem = {
+  id: string;         // Firestore Document ID
+  name: string;       // 商品名
+  price: number;      // 価格
+  stock: number;      // 現在の在庫数
+  limit: number;      // 1注文あたりの個数制限
+  createdAt?: number; // 作成日時
+};
 
-// メニュー商品 (menu collection)
-export interface MenuItem {
-  id: string;
+// 注文内の各アイテム
+export type OrderItem = {
+  menuId: string;
   name: string;
+  count: number;
   price: number;
-  stock: number;      // 現在在庫数
-  limit: number;      // 1人あたりの購入制限数
-  imageUrl?: string;
-  description?: string;
-  soldOut?: boolean;  // UI制御用
-  order?: number;     // 表示順
-}
+};
 
-// カート/注文商品詳細
-export interface CartItem {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
+// Module 2: 注文ステータス
+// ordered: 在庫確保・調理待ち
+// paying: 会計待ち（視認性強調）
+// completed: 受渡完了
+// cancelled: キャンセル（在庫復元）
+export type OrderStatus = 'ordered' | 'paying' | 'completed' | 'cancelled';
 
-// 注文データ (orders collection)
-export interface Order {
-  id: string;         // 注文ID (Document ID)
-  ticketId: string;   // ユーザー提示用チケットID (例: 4桁数字)
-  userId: string;     // ユーザー識別子
-  items: CartItem[];  // 購入商品リスト
-  totalPrice: number; // 合計金額
-  status: OrderStatus;
-  createdAt: any;     // Firestore Timestamp (or Millis for logic handling)
-}
+// Module 2: 注文データ (Firestore: orders collection)
+export type Order = {
+  id: string;             // Firestore Document ID
+  ticketId: string;       // 6桁連番 "000001"
+  items: OrderItem[];     // 注文商品の配列
+  totalAmount: number;    // 合計金額
+  status: OrderStatus;    // ステータス
+  createdAt: number;      // 注文日時 (Timestamp millis) - 30分遅延判定に使用
+};
