@@ -1,8 +1,11 @@
-//app/debug/Council/page.tsx
+// ＃生徒会用管理画面 (app/admin/super/page.tsx)
 "use client";
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useAdminLogic, convertGoogleDriveLink } from "./logic";
-import { QueueListView, ReservationListView, MenuManager, OrderDashboard } from "./components";
+import { QueueListView, ReservationListView } from "./components";
+
+// 30分の遅延判定用定数
+const LIMIT_TIME_MINUTES = 30;
 
 export default function SuperAdminPage() {
   const {
@@ -20,28 +23,57 @@ export default function SuperAdminPage() {
     resetForm, startEdit, handleSave, handleDeleteVenue,
     toggleReservationStatus, cancelReservation, updateQueueStatus,
     targetShop,
-    // New Order System Hooks
-    menuItems, orders, sortedOrders,
-    addMenuItem, updateMenuStock, deleteMenuItem,
-    completePayment, cancelOrder
+    // --- 追加: オーダーシステム用データ & ハンドラ (logic.tsに追加が必要) ---
+    menus, // Array: [{id, name, price, stock, limit, ...}]
+    orders, // Array: [{id, ticketId, items, totalAmount, status, createdAt, ...}]
+    menuForm, setMenuForm, // Object: {name, price, stock, limit}
+    handleAddMenu, // (shopId, form) => Promise
+    handleUpdateStock, // (shopId, menuId, diff) => Promise
+    handleDeleteMenu, // (shopId, menuId) => Promise
+    handleCompleteOrder, // (shopId, orderId) => Promise
+    handleCancelOrder // (shopId, orderId) => Promise
   } = useAdminLogic();
 
-  // Tab State for Detail View
-  const [detailTab, setDetailTab] = useState<'order' | 'menu' | 'entry' | 'settings'>('order');
+  // --- オーダーシステム: 表示用ロジック ---
+
+  // 注文リストのソートとフィルタリング
+  const sortedOrders = useMemo(() => {
+    if (!orders) return [];
+    
+    // completed / cancelled は基本非表示（必要なら履歴タブ等で対応）
+    const activeOrders = orders.filter((o: any) => ['paying', 'ordered'].includes(o.status));
+
+    return activeOrders.sort((a: any, b: any) => {
+      // 優先度1: status = 'paying' (会計待ち) が最上位
+      if (a.status === 'paying' && b.status !== 'paying') return -1;
+      if (a.status !== 'paying' && b.status === 'paying') return 1;
+
+      // 優先度2: status = 'ordered' (調理待ち) は FIFO (古い順)
+      // Firestore Timestampを想定 (seconds)
+      const timeA = a.createdAt?.seconds || 0;
+      const timeB = b.createdAt?.seconds || 0;
+      return timeA - timeB;
+    });
+  }, [orders]);
+
+  // 遅延判定 (30分以上経過)
+  const checkIsDelayed = (createdAt: any) => {
+    if (!createdAt?.seconds) return false;
+    const diffMs = Date.now() - (createdAt.seconds * 1000);
+    return diffMs > LIMIT_TIME_MINUTES * 60 * 1000;
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
-      {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex justify-between items-center sticky top-0 z-50 shadow-md">
           <div className="text-xs text-gray-400">Logged in as:</div>
           <div className="font-mono font-bold text-yellow-400 text-lg tracking-wider">{myUserId || "---"}</div>
       </div>
 
-      <div className="max-w-4xl mx-auto p-4 pb-32">
+      <div className="max-w-6xl mx-auto p-4 pb-32">
         <div className="mb-6 border-b border-gray-700 pb-4">
           <h1 className="text-2xl font-bold text-red-500 mb-4">生徒会・実行委員用 (Full Access)</h1>
-          
-          {/* Create / Edit Form */}
+            
           <details className="bg-gray-800 rounded-lg p-4 border border-gray-700 mb-4" open={isEditing}>
               <summary className="cursor-pointer font-bold text-blue-400">➕ 新規会場の作成 / 設定フォーム</summary>
               <div className="mt-4 pt-4 border-t border-gray-700">
@@ -83,9 +115,12 @@ export default function SuperAdminPage() {
                           value={description}
                           onChange={e => setDescription(e.target.value)}
                       />
+                      <div className="text-right text-xs text-gray-500">{description.length}/500</div>
                   </div>
 
-                  {/* Mode Switch */}
+                  {isEditing && manualId !== originalId && <div className="text-xs text-yellow-400 font-bold mb-2">⚠️ IDが変更されています。</div>}
+
+                  {/* ★ 運用モード選択スイッチ */}
                   <div className="bg-gray-900 p-3 rounded border border-gray-600 mb-3">
                       <label className="text-xs text-gray-400 mb-2 block font-bold">運用モード:</label>
                       <div className="flex gap-4">
@@ -100,7 +135,7 @@ export default function SuperAdminPage() {
                       </div>
                   </div>
 
-                  {/* Time Settings */}
+                  {/* ★UI変更: ラベル付き入力エリア */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3 bg-gray-900 p-3 rounded border border-gray-600">
                       <div>
                           <label className="text-xs text-gray-400 block mb-1 font-bold">開始時刻</label>
@@ -140,13 +175,12 @@ export default function SuperAdminPage() {
               </div>
           </details>
 
-          {/* Search Bar */}
           <div className="flex gap-2 items-center bg-gray-800 p-2 rounded border border-gray-600 mb-6">
               <span className="text-xl">🔍</span>
               <input className="flex-1 bg-transparent text-white outline-none" placeholder="ユーザーID検索..." value={searchUserId} onChange={e => setSearchUserId(e.target.value)} />
           </div>
 
-          {/* Dashboard Stats */}
+          {/* ダッシュボード */}
           <div className="bg-black border border-gray-600 rounded-xl p-4 mb-6 shadow-xl">
               <h2 className="text-sm font-bold text-gray-400 mb-3 uppercase tracking-wider">Dashboard & Global Actions</h2>
               <div className="flex justify-between items-center mb-6 bg-gray-900 p-4 rounded-lg border border-gray-800">
@@ -163,111 +197,282 @@ export default function SuperAdminPage() {
           </div>
         </div>
 
-        {/* --- List View or Detail View Switch --- */}
-        {!expandedShopId ? (
-          /* List View */
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {attractions.map(shop => {
-                  let hasUser = false;
-                  let totalCount = 0;
-                  if (shop.isQueueMode) {
-                      hasUser = searchUserId && shop.queue?.some((t:any) => t.userId?.includes(searchUserId.toUpperCase()));
-                      totalCount = shop.queue?.filter((t:any) => ['waiting', 'ready'].includes(t.status)).length || 0;
-                  } else {
-                      hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
-                      totalCount = shop.reservations?.length || 0;
-                  }
+        {!expandedShopId && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {attractions.map(shop => {
+                    // 検索ヒット判定（予約 or キュー）
+                    let hasUser = false;
+                    let totalCount = 0;
+                    if (shop.isQueueMode) {
+                        hasUser = searchUserId && shop.queue?.some((t:any) => t.userId?.includes(searchUserId.toUpperCase()));
+                        totalCount = shop.queue?.filter((t:any) => ['waiting', 'ready'].includes(t.status)).length || 0;
+                    } else {
+                        hasUser = searchUserId && shop.reservations?.some((r:any) => r.userId?.includes(searchUserId.toUpperCase()));
+                        totalCount = shop.reservations?.length || 0;
+                    }
 
-                  return (
-                      <button key={shop.id} onClick={() => setExpandedShopId(shop.id)} className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}>
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-mono text-2xl font-bold text-white">{shop.id}</span>
-                            <span className="text-sm text-gray-400 bg-gray-900 px-2 py-0.5 rounded border border-gray-700">{shop.name}</span>
-                          </div>
-                          <div className="text-xs text-gray-500">{shop.department}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-mono font-bold text-white">{totalCount} <span className="text-xs text-gray-500 font-sans font-normal">組待機</span></div>
-                          <div className="text-[10px] text-gray-400">{shop.isQueueMode ? '列並び' : '時間予約'}</div>
-                        </div>
-                      </button>
-                  );
-              })}
-              {attractions.length === 0 && <div className="col-span-2 text-center text-gray-500 py-10">会場がありません</div>}
-          </div>
-        ) : (
-          /* Detail View */
-          <div className="bg-gray-900 rounded-xl min-h-[500px]">
-            {/* Detail Header */}
-            <div className="flex items-center gap-4 mb-6">
-              <button onClick={() => setExpandedShopId(null)} className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded border border-gray-600">
-                ← 戻る
-              </button>
-              <div className="flex-1">
-                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                  <span className="font-mono text-yellow-400">{targetShop?.id}</span>
-                  {targetShop?.name}
-                </h2>
-                <div className="text-xs text-gray-400 flex gap-2">
-                  <span>{targetShop?.department}</span>
-                  {targetShop?.isPaused && <span className="text-red-400 font-bold">🚫 受付停止中</span>}
-                </div>
-              </div>
-              <button onClick={() => startEdit(targetShop)} className="text-blue-400 underline text-sm">設定変更</button>
-              <button onClick={() => handleDeleteVenue(targetShop.id)} className="text-red-500 underline text-sm ml-2">削除</button>
+                    return (
+                        <button key={shop.id} onClick={() => setExpandedShopId(shop.id)} className={`p-4 rounded-xl border text-left flex justify-between items-center hover:bg-gray-800 transition ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}>
+                            <div className="flex items-center gap-4">
+                                {/* 画像 */}
+                                {shop.imageUrl ? (
+                                    <img src={shop.imageUrl} alt={shop.name} referrerPolicy="no-referrer" className="w-14 h-14 object-cover rounded-md bg-gray-900 shrink-0" />
+                                ) : (
+                                    <div className="w-14 h-14 bg-gray-700 rounded-md flex items-center justify-center text-xs text-gray-500 shrink-0">No Img</div>
+                                )}
+                                <div className="flex flex-col items-start min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-yellow-400 font-bold font-mono text-sm">{shop.id}</span>
+                                        {shop.department && <span className="text-xs text-blue-300 font-bold border-l border-gray-600 pl-2">{shop.department}</span>}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-bold text-lg leading-tight line-clamp-1">{shop.name}</span>
+                                        {shop.isPaused && <span className="text-[10px] bg-red-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">停止中</span>}
+                                        {/* モードバッジ */}
+                                        {shop.isQueueMode ? 
+                                            <span className="text-[10px] bg-purple-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">並び順</span> :
+                                            <span className="text-[10px] bg-blue-600 px-1.5 py-0.5 rounded text-white whitespace-nowrap">予約制</span>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4 pl-2">
+                                <div className="text-right">
+                                    <span className="text-[10px] text-gray-500 block">{shop.isQueueMode ? "WAITING" : "TOTAL"}</span>
+                                    <span className="font-mono text-xl text-blue-400">{String(totalCount).padStart(3, '0')}</span>
+                                </div>
+                                <div className="text-gray-400 text-2xl">›</div>
+                            </div>
+                        </button>
+                    );
+                })}
             </div>
-
-            {/* Tabs */}
-            <div className="flex gap-2 border-b border-gray-700 mb-6 overflow-x-auto pb-2">
-               <button onClick={() => setDetailTab('order')} className={`px-4 py-2 rounded-t-lg font-bold text-sm whitespace-nowrap ${detailTab === 'order' ? 'bg-yellow-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-                 👨‍🍳 注文・会計
-               </button>
-               <button onClick={() => setDetailTab('menu')} className={`px-4 py-2 rounded-t-lg font-bold text-sm whitespace-nowrap ${detailTab === 'menu' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-                 🍔 メニュー管理
-               </button>
-               <button onClick={() => setDetailTab('entry')} className={`px-4 py-2 rounded-t-lg font-bold text-sm whitespace-nowrap ${detailTab === 'entry' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}>
-                 🚪 入場・待機列
-               </button>
-            </div>
-
-            {/* Content */}
-            <div>
-              {detailTab === 'order' && (
-                <OrderDashboard 
-                  sortedOrders={sortedOrders} 
-                  onComplete={completePayment} 
-                  onCancel={cancelOrder} 
-                />
-              )}
-              {detailTab === 'menu' && (
-                <MenuManager 
-                  menuItems={menuItems} 
-                  onAdd={addMenuItem} 
-                  onUpdateStock={updateMenuStock} 
-                  onDelete={deleteMenuItem} 
-                />
-              )}
-              {detailTab === 'entry' && (
-                targetShop?.isQueueMode ? (
-                  <QueueListView 
-                    shop={targetShop} 
-                    searchUserId={searchUserId} 
-                    onUpdateStatus={updateQueueStatus} 
-                  />
-                ) : (
-                  <ReservationListView 
-                    shop={targetShop} 
-                    searchUserId={searchUserId} 
-                    onToggleStatus={toggleReservationStatus} 
-                    onCancel={cancelReservation} 
-                  />
-                )
-              )}
-            </div>
-          </div>
         )}
 
+        {expandedShopId && targetShop && (
+            <div className="animate-fade-in">
+                <button onClick={() => { setExpandedShopId(null); setIsEditing(false); }} className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white">← 会場一覧に戻る</button>
+                <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
+                    <div className="bg-gray-700 p-4 flex justify-between items-center relative overflow-hidden">
+                        {targetShop.imageUrl && (
+                            <div className="absolute inset-0 opacity-30">
+                                <img src={targetShop.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 bg-gradient-to-r from-gray-900 via-gray-900/80 to-transparent"></div>
+                            </div>
+                        )}
+                        <div className="relative z-10 flex-1">
+                            {targetShop.department && <span className="text-[10px] font-bold bg-blue-500 text-white px-2 py-0.5 rounded mb-1 inline-block border border-blue-400">{targetShop.department}</span>}
+                            <h2 className="text-2xl font-bold flex items-center gap-2"><span className="text-yellow-400 font-mono">{targetShop.id}</span>{targetShop.name}</h2>
+                            <p className="text-xs text-gray-400 mt-1">
+                                {targetShop.isQueueMode ? <span className="text-purple-400 font-bold">🚶‍♂️ 順番待ち制 (整理券)</span> : <span className="text-blue-400 font-bold">📅 時間予約制</span>} | 
+                                Pass: {targetShop.password} | 定員: {targetShop.capacity}組
+                            </p>
+                        </div>
+                        <div className="flex gap-2 relative z-10">
+                            <button onClick={() => startEdit(targetShop)} className="bg-blue-600 text-xs px-3 py-2 rounded hover:bg-blue-500 shadow">設定編集</button>
+                            <button onClick={() => handleDeleteVenue(targetShop.id)} className="bg-red-600 text-xs px-3 py-2 rounded hover:bg-red-500 shadow">会場削除</button>
+                        </div>
+                    </div>
+
+                    <div className="p-4 space-y-8">
+                        {targetShop.description && (
+                            <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">
+                                {targetShop.description}
+                            </div>
+                        )}
+
+                        {/* --- 既存の予約/待機列システム --- */}
+                        <div>
+                            {targetShop.isQueueMode ? (
+                                <QueueListView 
+                                    shop={targetShop} 
+                                    searchUserId={searchUserId} 
+                                    onUpdateStatus={updateQueueStatus} 
+                                />
+                            ) : (
+                                <ReservationListView 
+                                    shop={targetShop} 
+                                    searchUserId={searchUserId} 
+                                    onToggleStatus={toggleReservationStatus} 
+                                    onCancel={cancelReservation} 
+                                />
+                            )}
+                        </div>
+
+                        {/* --- 新規追加: オーダーシステム (Order System) --- */}
+                        <div className="border-t-4 border-dashed border-gray-700 pt-8 mt-8">
+                            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2 text-yellow-400">
+                                🍟 モバイルオーダー管理 (Menu & Orders)
+                            </h2>
+
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                {/* Module 2: 注文監視・決済フロー (Order Dashboard) */}
+                                <div className="order-dashboard">
+                                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">
+                                        👨‍🍳 Kitchen / Cashier Monitor
+                                    </h3>
+                                    
+                                    <div className="space-y-4">
+                                        {sortedOrders.length === 0 ? (
+                                            <div className="text-center p-8 bg-gray-900/50 rounded-xl border border-gray-700 text-gray-500">
+                                                現在のアクティブな注文はありません
+                                            </div>
+                                        ) : (
+                                            sortedOrders.map((order: any) => {
+                                                const isPaying = order.status === 'paying';
+                                                const isDelayed = checkIsDelayed(order.createdAt);
+
+                                                return (
+                                                    <div key={order.id} 
+                                                        className={`
+                                                            relative rounded-xl overflow-hidden transition-all duration-300
+                                                            ${isPaying 
+                                                                ? 'bg-gray-800 border-4 border-yellow-400 transform scale-105 z-10 shadow-[0_0_20px_rgba(250,204,21,0.3)]' 
+                                                                : 'bg-gray-900 border border-gray-700 hover:bg-gray-800'}
+                                                            ${isDelayed && !isPaying ? 'border-2 border-red-500' : ''}
+                                                        `}
+                                                    >
+                                                        {isPaying && (
+                                                            <div className="bg-yellow-400 text-black text-center font-bold text-xs py-1 animate-pulse">
+                                                                💰 会計 / 支払い待ち
+                                                            </div>
+                                                        )}
+                                                        {isDelayed && !isPaying && (
+                                                            <div className="bg-red-500 text-white text-center font-bold text-[10px] py-0.5">
+                                                                ⚠️ {LIMIT_TIME_MINUTES}分経過 - 遅延注意
+                                                            </div>
+                                                        )}
+
+                                                        <div className="p-4 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center gap-2 mb-2">
+                                                                    <span className="font-mono text-2xl font-bold text-white tracking-widest bg-gray-700 px-2 rounded">
+                                                                        #{order.ticketId}
+                                                                    </span>
+                                                                    <span className="text-xs text-gray-400">
+                                                                        {new Date(order.createdAt?.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="space-y-1 mb-2">
+                                                                    {order.items?.map((item: any, idx: number) => (
+                                                                        <div key={idx} className="text-sm flex justify-between border-b border-gray-700 pb-1 last:border-0">
+                                                                            <span>{item.name} <span className="text-gray-500">x{item.quantity}</span></span>
+                                                                            <span className="font-mono text-gray-300">¥{item.price * item.quantity}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                                <div className="text-right text-lg font-bold text-blue-300">
+                                                                    Total: ¥{order.totalAmount?.toLocaleString()}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex flex-row md:flex-col gap-2 w-full md:w-auto">
+                                                                <button 
+                                                                    onClick={() => handleCompleteOrder(targetShop.id, order.id)}
+                                                                    className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded shadow-lg whitespace-nowrap"
+                                                                >
+                                                                    ✅ 完了
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => handleCancelOrder(targetShop.id, order.id)}
+                                                                    className="bg-gray-700 hover:bg-red-900/50 text-gray-300 hover:text-red-300 py-2 px-4 rounded text-xs border border-gray-600 transition-colors"
+                                                                >
+                                                                    キャンセル
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Module 1: メニュー管理 (Menu Management) */}
+                                <div className="menu-management bg-gray-800/50 rounded-xl p-4 border border-gray-700 h-fit">
+                                    <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3">
+                                        📝 Menu Editor
+                                    </h3>
+                                    
+                                    {/* 追加フォーム */}
+                                    <div className="bg-gray-900 p-3 rounded-lg border border-gray-600 mb-4">
+                                        <div className="grid grid-cols-2 gap-2 mb-2">
+                                            <input 
+                                                className="bg-gray-700 p-2 rounded text-white text-sm" 
+                                                placeholder="商品名" 
+                                                value={menuForm?.name || ''} 
+                                                onChange={e => setMenuForm({...menuForm, name: e.target.value})}
+                                            />
+                                            <input 
+                                                type="number"
+                                                className="bg-gray-700 p-2 rounded text-white text-sm" 
+                                                placeholder="価格" 
+                                                value={menuForm?.price || ''} 
+                                                onChange={e => setMenuForm({...menuForm, price: Number(e.target.value)})}
+                                            />
+                                            <input 
+                                                type="number"
+                                                className="bg-gray-700 p-2 rounded text-white text-sm" 
+                                                placeholder="初期在庫数" 
+                                                value={menuForm?.stock || ''} 
+                                                onChange={e => setMenuForm({...menuForm, stock: Number(e.target.value)})}
+                                            />
+                                            <input 
+                                                type="number"
+                                                className="bg-gray-700 p-2 rounded text-white text-sm" 
+                                                placeholder="購入制限(個)" 
+                                                value={menuForm?.limit || ''} 
+                                                onChange={e => setMenuForm({...menuForm, limit: Number(e.target.value)})}
+                                            />
+                                        </div>
+                                        <button 
+                                            onClick={() => handleAddMenu(targetShop.id, menuForm)}
+                                            className="w-full bg-green-700 hover:bg-green-600 text-white font-bold py-2 rounded text-sm transition"
+                                        >
+                                            ＋ メニュー追加
+                                        </button>
+                                    </div>
+
+                                    {/* メニュー一覧 & 在庫管理 */}
+                                    <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                                        {menus?.map((menu: any) => (
+                                            <div key={menu.id} className="flex items-center justify-between bg-gray-900 p-3 rounded border border-gray-700">
+                                                <div className="flex-1">
+                                                    <div className="font-bold text-sm">{menu.name}</div>
+                                                    <div className="text-xs text-gray-500">¥{menu.price} | 上限: {menu.limit}</div>
+                                                </div>
+                                                
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex items-center bg-gray-800 rounded px-1 border border-gray-600">
+                                                        <button 
+                                                            onClick={() => handleUpdateStock(targetShop.id, menu.id, -1)}
+                                                            className="text-red-400 font-bold px-2 hover:bg-gray-700 rounded-l"
+                                                        >-</button>
+                                                        <span className={`w-8 text-center text-sm font-mono ${menu.stock === 0 ? 'text-red-500 font-bold' : 'text-white'}`}>
+                                                            {menu.stock}
+                                                        </span>
+                                                        <button 
+                                                            onClick={() => handleUpdateStock(targetShop.id, menu.id, 1)}
+                                                            className="text-green-400 font-bold px-2 hover:bg-gray-700 rounded-r"
+                                                        >+</button>
+                                                    </div>
+                                                    <button 
+                                                        onClick={() => handleDeleteMenu(targetShop.id, menu.id)}
+                                                        className="text-gray-500 hover:text-red-500 px-1"
+                                                    >🗑️</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {(!menus || menus.length === 0) && <div className="text-xs text-gray-500 text-center py-2">メニューがありません</div>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        )}
       </div>
     </div>
   );
