@@ -93,6 +93,7 @@ function DestroyModal({
 // ─────────────────────────────────────────
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]); // users collection
   const [myUserId, setMyUserId] = useState("");
 
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null);
@@ -139,11 +140,14 @@ export default function SuperAdminPage() {
     }
     setMyUserId(stored);
 
-    const unsub = onSnapshot(collection(db, "attractions"), (snapshot) => {
+    const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       setAttractions(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    const unsubUsers = onSnapshot(collection(db, "users"), (snapshot) => {
+      setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
     const timer = setInterval(() => setNow(new Date()), 60000);
-    return () => { unsub(); clearInterval(timer); };
+    return () => { unsubAttractions(); unsubUsers(); clearInterval(timer); };
   }, []);
 
   const stats = useMemo(() => {
@@ -183,13 +187,16 @@ export default function SuperAdminPage() {
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
-  // ★変更: 全UID・会場データ削除（モーダル経由）
+  // ★変更: 全UID（usersコレクション）・会場データを両方削除（モーダル経由）
   const handleBulkDestroyAll = async () => {
     try {
+      // attractions（会場・予約・待機列）を全削除
       await Promise.all(attractions.map(shop => deleteDoc(doc(db, "attractions", shop.id))));
+      // users（UID・ニックネーム・BAN情報）を全削除
+      await Promise.all(users.map(user => deleteDoc(doc(db, "users", user.id))));
       setExpandedShopId(null);
       setShowDestroyModal(false);
-      alert("全データを削除しました。");
+      alert("全会場データ・全UIDを削除しました。");
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
