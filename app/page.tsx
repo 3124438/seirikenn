@@ -223,7 +223,7 @@ export default function Home() {
   // --- 予約・発券ロジック ---
 
   const handleSelectTime = (shop: any, time: string) => {
-    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (activeTickets.length >= 6) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
     
     const limitGroups = shop.capacity || 0; 
