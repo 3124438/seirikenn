@@ -388,7 +388,7 @@ export default function Home() {
            
            <div className="flex items-center gap-2">
                <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-                   {activeTickets.length}/3枚
+                   {activeTickets.length}/6枚
                </div>
            </div>
         </div>
