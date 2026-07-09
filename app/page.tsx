@@ -240,7 +240,7 @@ export default function Home() {
   };
 
   const handleJoinQueue = (shop: any) => {
-    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (activeTickets.length >= 6) return alert("チケットは3枚までです。");
     if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
     if (shop.isPaused) return alert("停止中です。");
 
