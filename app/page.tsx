@@ -33,6 +33,9 @@ export default function Home() {
   const [enableSound, setEnableSound] = useState(false);
   const [enableVibrate, setEnableVibrate] = useState(false);
 
+  // ★個別チケットごとの音声停止管理（uniqueKeyのSet）
+  const [mutedTickets, setMutedTickets] = useState<Set<string>>(new Set());
+
   // ★QRコード関連のステート
   // qrTicket がセットされているときだけカメラモーダルを開く
   const [qrTicket, setQrTicket] = useState<Ticket | null>(null);
@@ -109,6 +112,19 @@ export default function Home() {
          navigator.vibrate(200);
      }
      alert("テスト音再生中\n(マナーモードや音量設定を確認してください)");
+  };
+
+  // ★個別チケットの音声停止/再開を切り替える
+  const toggleMuteTicket = (uniqueKey: string) => {
+    setMutedTickets(prev => {
+      const next = new Set(prev);
+      if (next.has(uniqueKey)) {
+        next.delete(uniqueKey);
+      } else {
+        next.add(uniqueKey);
+      }
+      return next;
+    });
   };
 
   // 1. 初期化とデータ監視
@@ -209,12 +225,15 @@ export default function Home() {
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
   // ★通知ループ処理
-  // ・status が 'ready'（チケットが赤くなった状態）になっている間だけループが有効
+  // ・status が 'ready'（チケットが赤くなった状態）かつ「音声停止」されていないチケットが
+  //   1つでもあればループが有効
   // ・入場処理でチケットが activeTickets から消える（＝消費される）と自動的に鳴り止む
   useEffect(() => {
     const intervalId = setInterval(() => {
-      const hasReadyTicket = activeTickets.some(t => t.status === 'ready');
-      if (hasReadyTicket) {
+      const hasUnmutedReadyTicket = activeTickets.some(
+        t => t.status === 'ready' && !mutedTickets.has(t.uniqueKey)
+      );
+      if (hasUnmutedReadyTicket) {
         if (enableSound) playBeep();
         if (enableVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
             try { navigator.vibrate(200); } catch(e) { /* ignore */ }
@@ -223,7 +242,7 @@ export default function Home() {
     }, 1000); 
 
     return () => clearInterval(intervalId);
-  }, [activeTickets, enableSound, enableVibrate]);
+  }, [activeTickets, enableSound, enableVibrate, mutedTickets]);
 
 
   if (isBanned) {
@@ -459,6 +478,7 @@ export default function Home() {
           <p className="text-blue-900 text-sm font-bold">🎟️ あなたのチケット</p>
           {activeTickets.map((t) => {
             const isReady = t.status === 'ready';
+            const isMuted = mutedTickets.has(t.uniqueKey);
             const cardClass = isReady 
               ? "bg-red-50 border-l-4 border-red-500 shadow-xl ring-2 ring-red-400 animate-pulse-slow" 
               : "bg-white border-l-4 border-green-500 shadow-lg";
@@ -491,7 +511,19 @@ export default function Home() {
                       {t.isQueue && (
                           <div className="mt-2">
                               {isReady ? (
-                                <p className="text-red-600 font-bold text-lg animate-bounce">🔔 呼び出し中です！</p>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-red-600 font-bold text-lg animate-bounce">🔔 呼び出し中です！</p>
+                                  {/* ★音声停止/再開ボタン */}
+                                  <button
+                                    onClick={() => toggleMuteTicket(t.uniqueKey)}
+                                    className={`text-xs font-bold px-2 py-1 rounded-full border transition-colors
+                                      ${isMuted 
+                                        ? "bg-gray-100 text-gray-500 border-gray-300" 
+                                        : "bg-white text-red-600 border-red-300 hover:bg-red-50"}`}
+                                  >
+                                    {isMuted ? "🔔 音声再開" : "🔕 音声停止"}
+                                  </button>
+                                </div>
                               ) : (
                                 <p className="text-blue-600 font-bold text-sm">
                                   あなたの前に <span className="text-xl text-blue-800">{t.peopleAhead}</span> 組待ち
