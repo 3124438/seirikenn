@@ -22,6 +22,14 @@ type Ticket = {
   peopleAhead?: number;
 };
 
+// ★「ピッ」1回の長さ（秒）と、2回目の「ピッ」が鳴り始めるまでのオフセット（秒）
+const TONE_DURATION = 0.15;
+const SECOND_TONE_OFFSET = 0.2;
+// ★「ピッピ」全体の長さ（ミリ秒）＝2回目のオフセット + 1回分の長さ
+const BEEP_TOTAL_MS = (SECOND_TONE_OFFSET + TONE_DURATION) * 1000;
+// ★「ピッピ」が鳴り終わってから次の「ピッピ」までの間隔（ミリ秒）
+const GAP_AFTER_BEEP_MS = 1000;
+
 export default function Home() {
   const [attractions, setAttractions] = useState<any[]>([]);
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
@@ -42,6 +50,8 @@ export default function Home() {
 
   // 音声再生用の参照 (Web Audio API)
   const audioCtxRef = useRef<AudioContext | null>(null);
+  // ★「ピッピ→1秒あける」ループの再スケジュール用タイマー参照
+  const loopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 申し込み画面用の状態
   const [draftBooking, setDraftBooking] = useState<{ time: string; remaining: number; mode: "slot" | "queue"; maxPeople: number } | null>(null);
@@ -77,10 +87,10 @@ export default function Home() {
     gainNode.connect(ctx.destination);
 
     oscillator.start(startTime);
-    oscillator.stop(startTime + 0.15);
+    oscillator.stop(startTime + TONE_DURATION);
   };
 
-  // ★「ピピッ」という2連ビープを鳴らす関数（この関数自体がsetIntervalで1秒毎に呼ばれる）
+  // ★「ピピッ」という2連ビープを鳴らす関数
   const playBeep = () => {
     try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
@@ -99,7 +109,7 @@ export default function Home() {
         // 1回目の「ピッ」
         playSingleTone(ctx, now);
         // 2回目の「ピッ」（0.2秒後、合計で「ピピッ」というリズムに）
-        playSingleTone(ctx, now + 0.2);
+        playSingleTone(ctx, now + SECOND_TONE_OFFSET);
     } catch (e) {
         console.error("Audio play failed", e);
     }
@@ -225,23 +235,44 @@ export default function Home() {
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
   // ★通知ループ処理
+  // ・「ピッピ」を鳴らす → 鳴り終わってから正確に1秒あける → また「ピッピ」…を繰り返す（setTimeoutの再帰呼び出し）
   // ・status が 'ready'（チケットが赤くなった状態）かつ「音声停止」されていないチケットが
   //   1つでもあればループが有効
   // ・入場処理でチケットが activeTickets から消える（＝消費される）と自動的に鳴り止む
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      const hasUnmutedReadyTicket = activeTickets.some(
-        t => t.status === 'ready' && !mutedTickets.has(t.uniqueKey)
-      );
-      if (hasUnmutedReadyTicket) {
+    const hasUnmutedReadyTicket = activeTickets.some(
+      t => t.status === 'ready' && !mutedTickets.has(t.uniqueKey)
+    );
+
+    const shouldRun = hasUnmutedReadyTicket && (enableSound || enableVibrate);
+
+    if (shouldRun) {
+      const loop = () => {
         if (enableSound) playBeep();
         if (enableVibrate && typeof navigator !== "undefined" && navigator.vibrate) {
             try { navigator.vibrate(200); } catch(e) { /* ignore */ }
         }
+        // ★「ピッピ」の再生（約0.35秒）が終わってから、正確に1秒後に次を鳴らす
+        loopTimeoutRef.current = setTimeout(loop, BEEP_TOTAL_MS + GAP_AFTER_BEEP_MS);
+      };
+      // まだループが動いていなければ開始する（重複起動を防止）
+      if (!loopTimeoutRef.current) {
+        loop();
       }
-    }, 1000); 
+    } else {
+      // 条件を満たさなくなったらループを止める
+      if (loopTimeoutRef.current) {
+        clearTimeout(loopTimeoutRef.current);
+        loopTimeoutRef.current = null;
+      }
+    }
 
-    return () => clearInterval(intervalId);
+    return () => {
+      if (loopTimeoutRef.current) {
+        clearTimeout(loopTimeoutRef.current);
+        loopTimeoutRef.current = null;
+      }
+    };
   }, [activeTickets, enableSound, enableVibrate, mutedTickets]);
 
 
