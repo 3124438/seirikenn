@@ -171,7 +171,6 @@ function DestroyModal({
   onCancel: () => void;
 }) {
   const [code] = useState(() => {
-    // 6桁の乱数（数字）を生成
     return String(Math.floor(100000 + Math.random() * 900000));
   });
   const [input, setInput] = useState("");
@@ -239,7 +238,7 @@ function DestroyModal({
 // ─────────────────────────────────────────
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
-  const [users, setUsers] = useState<any[]>([]); // users collection
+  const [users, setUsers] = useState<any[]>([]);
   const [myUserId, setMyUserId] = useState("");
 
   const [expandedShopId, setExpandedShopId] = useState<string | null>(null);
@@ -264,7 +263,6 @@ export default function SuperAdminPage() {
 
   const [searchUserId, setSearchUserId] = useState("");
   const [now, setNow] = useState(new Date());
-  const [guestTime, setGuestTime] = useState("");
 
   // ★ゲスト枠追加モーダル
   const [guestModalShopId, setGuestModalShopId] = useState<string | null>(null);
@@ -341,18 +339,16 @@ export default function SuperAdminPage() {
     setShowSelectDestroyModal(false);
   };
 
-  // ★変更: 選択されたUID・会場データのみを削除（最終確認モーダル経由）
+  // ★選択されたUID・会場データのみを削除（最終確認モーダル経由）
   const handleBulkDestroySelected = async () => {
     if (!pendingDestroyTargets) return;
     const { userIds, shopIds } = pendingDestroyTargets;
     try {
-      // 選択された attractions（会場・予約・待機列）を削除
       await Promise.all(shopIds.map(id => deleteDoc(doc(db, "attractions", id))));
-      // 選択された users（UID・ニックネーム・BAN情報）を削除
       await Promise.all(userIds.map(id => deleteDoc(doc(db, "users", id))));
       if (shopIds.includes(expandedShopId || "")) setExpandedShopId(null);
       setPendingDestroyTargets(null);
-      alert(`選択した shopIds.length件の会場・{userIds.length}件のUIDを削除しました。`);
+      alert(`選択した ${shopIds.length}件の会場・${userIds.length}件のUIDを削除しました。`);
     } catch (e) { alert("エラーが発生しました。"); }
   };
 
@@ -391,6 +387,7 @@ export default function SuperAdminPage() {
       if (currentShop) {
         existingReservations = currentShop.reservations || [];
         existingQueue = currentShop.queue || [];
+        // 時間やdurationが変更されたかをチェック
         if (currentShop.openTime === openTime && currentShop.closeTime === closeTime && currentShop.duration === duration) {
           slots = currentShop.slots || {}; shouldResetSlots = false;
         } else {
@@ -405,12 +402,13 @@ export default function SuperAdminPage() {
       slots = {};
       while (current < end) {
         const timeStr = current.toTimeString().substring(0, 5);
-        slots = { ...slots, [timeStr]: 0 };
+        slots[timeStr] = 0;
         current.setMinutes(current.getMinutes() + duration);
       }
-           existingReservations.forEach((res: any) => {
-        if (Object.prototype.hasOwnProperty.call(slots, res.time)) { slots[res.time] = (slots[res.time] || 0) + 1; }
-      });
+      // 枠を作り直す場合、枠に紐づいていた予約情報も同時にクリア
+      if (isEditing) {
+        existingReservations = [];
+      }
     }
 
     const data: any = {
@@ -423,12 +421,14 @@ export default function SuperAdminPage() {
 
     try {
       if (isEditing && originalId && manualId !== originalId) {
-        if (!confirm(`会場IDを「originalId」から「{manualId}」に変更しますか？`)) return;
+        if (!confirm(`会場IDを「${originalId}」から「${manualId}」に変更しますか？`)) return;
+        // 古い slots がマージされないよう { merge: true } なしでsetDoc
         await setDoc(doc(db, "attractions", manualId), data);
         await deleteDoc(doc(db, "attractions", originalId));
         setExpandedShopId(manualId);
       } else {
-        await setDoc(doc(db, "attractions", manualId), data, { merge: true });
+        // { merge: true } を外し、slots オブジェクトを完全置換（上書き）して消去・再作成する
+        await setDoc(doc(db, "attractions", manualId), data);
         if (isEditing) setExpandedShopId(manualId);
       }
       alert(isEditing ? "更新しました" : "作成しました");
@@ -452,7 +452,7 @@ export default function SuperAdminPage() {
   const cancelReservation = async (shop: any, res: any) => {
     if (!confirm(`User ID: ${res.userId}\nこの予約を削除しますか？`)) return;
     const otherRes = shop.reservations.filter((r: any) => r.timestamp !== res.timestamp);
-    const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, shop.slots[res.time] - 1) };
+    const updatedSlots = { ...shop.slots, [res.time]: Math.max(0, (shop.slots[res.time] || 0) - 1) };
     await updateDoc(doc(db, "attractions", shop.id), { reservations: otherRes, slots: updatedSlots });
   };
 
@@ -554,7 +554,7 @@ export default function SuperAdminPage() {
     const releaseDate = new Date(slotDate.getTime() - (relH * 60 + relM) * 60000);
     return {
       isReleased: now >= releaseDate,
-      releaseTimeStr: `String(releaseDate.getHours()).padStart(2,'0'):{String(releaseDate.getMinutes()).padStart(2, '0')} 解放`,
+      releaseTimeStr: `${String(releaseDate.getHours()).padStart(2, '0')}:${String(releaseDate.getMinutes()).padStart(2, '0')} 解放`,
     };
   };
 
@@ -758,7 +758,6 @@ export default function SuperAdminPage() {
               <button onClick={() => handleBulkPause(true)} className="bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800 py-2 rounded text-xs font-bold transition">🛑 一斉停止</button>
               <button onClick={() => handleBulkPause(false)} className="bg-green-900/50 hover:bg-green-800 text-green-200 border border-green-800 py-2 rounded text-xs font-bold transition">▶️ 一斉再開</button>
               <button onClick={handleBulkDeleteReservations} className="bg-orange-900/50 hover:bg-orange-800 text-orange-200 border border-orange-800 py-2 rounded text-xs font-bold transition">🗑️ データ全削除</button>
-              {/* ★変更: 押すとまず選択モーダルが開く */}
               <button
                 onClick={() => setShowSelectDestroyModal(true)}
                 className="bg-gray-800 hover:bg-red-900/60 text-gray-400 hover:text-red-200 border border-gray-700 hover:border-red-700 py-2 rounded text-xs font-bold transition"
@@ -1033,4 +1032,5 @@ export default function SuperAdminPage() {
     </div>
   );
 }
+
 
