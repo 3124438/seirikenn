@@ -271,6 +271,9 @@ export default function AdminPage() {
                 slots = { ...slots, [timeStr]: 0 };
                 current.setMinutes(current.getMinutes() + duration);
             }
+                     (currentShop?.reservations || []).forEach((res: any) => {
+                if (Object.prototype.hasOwnProperty.call(slots, res.time)) { slots[res.time] = (slots[res.time] || 0) + 1; }
+            });
         }
     } else {
         // 順番待ちモードならスロットは既存維持か空にする（ここでは既存維持しつつモード優先）
