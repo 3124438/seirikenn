@@ -677,7 +677,7 @@ export default function SuperAdminPage() {
                   type="text"
                   className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono"
                   maxLength={100}
-                  placeholder="例: 楽しい #お化け屋敷 #3年A組"
+                  placeholder="例: #ホラー (スペースで区切って「#」を付けて。複数OK 全角OK)"
                   value={hashtagInput}
                   onChange={e => setHashtagInput(e.target.value)}
                 />
