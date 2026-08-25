@@ -545,7 +545,7 @@ export default function AdminPage() {
                         <input 
                             type="text"
                             className="w-full bg-gray-700 p-2 rounded text-white text-sm border border-gray-600 focus:border-blue-500 outline-none"
-                            placeholder="例: #ホラー #1年生 (スペースで区切って複数入力可能)"
+                            placeholder="例: #ホラー (スペースで区切って「#」を付けて。複数OK 全角OK)"
                             maxLength={100}
                             value={rawTags}
                             onChange={e => setRawTags(e.target.value)}
