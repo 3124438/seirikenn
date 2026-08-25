@@ -353,14 +353,8 @@ export default function Home() {
 
   const allTags = Array.from(new Set(attractions.flatMap(a => a.tags || [])));
   
-  // ★ソートされたタグリスト（選択されているものが上に来る）
-  const sortedTags = [...allTags].sort((a, b) => {
-    const aSelected = selectedTags.includes(a);
-    const bSelected = selectedTags.includes(b);
-    if (aSelected && !bSelected) return -1;
-    if (!aSelected && bSelected) return 1;
-    return 0;
-  });
+  // ★リストには未選択のタグのみを表示し、選択したものは上のピルに移動させる
+  const unselectedTags = allTags.filter(tag => !selectedTags.includes(tag));
 
   const filteredAttractions = attractions
     .filter(shop => {
@@ -607,37 +601,39 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* 展開中の選択中タグ表示（長円形で小さく） */}
+                  {/* ★展開中の選択中タグ表示（タップで解除可能に） */}
                   {selectedTags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-3">
                       {selectedTags.map(tag => (
-                        <span key={tag} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full border border-blue-200">
-                          #{tag}
+                        <span 
+                          key={tag} 
+                          onClick={() => setSelectedTags(prev => prev.filter(t => t !== tag))}
+                          className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full border border-blue-200 cursor-pointer hover:bg-blue-200 transition flex items-center gap-1"
+                        >
+                          #{tag} <span className="text-blue-500 font-black">×</span>
                         </span>
                       ))}
                     </div>
                   )}
 
-                  {/* 1行に1つ、右端にチェックボックスのリスト */}
-                  <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-gray-50 flex flex-col gap-2">
-                    {sortedTags.map(tag => (
-                      <label key={tag} className="flex justify-between items-center text-base bg-white px-3 py-3 rounded-lg border shadow-sm cursor-pointer hover:bg-blue-50 transition">
-                        <span className="text-gray-800 font-bold">#{tag}</span>
-                        <input 
-                          type="checkbox" 
-                          checked={selectedTags.includes(tag)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
+                  {/* ★1行に1つ、右端にチェックボックスのリスト（未選択のみ表示） */}
+                  {unselectedTags.length > 0 && (
+                    <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-gray-50 flex flex-col gap-2">
+                      {unselectedTags.map(tag => (
+                        <label key={tag} className="flex justify-between items-center text-base bg-white px-3 py-3 rounded-lg border shadow-sm cursor-pointer hover:bg-blue-50 transition">
+                          <span className="text-gray-800 font-bold">#{tag}</span>
+                          <input 
+                            type="checkbox" 
+                            checked={false}
+                            onChange={() => {
                               setSelectedTags(prev => [...prev, tag]);
-                            } else {
-                              setSelectedTags(prev => prev.filter(t => t !== tag));
-                            }
-                          }}
-                          className="w-6 h-6 rounded text-blue-600 focus:ring-blue-500 border-gray-300"
-                        />
-                      </label>
-                    ))}
-                  </div>
+                            }}
+                            className="w-6 h-6 rounded text-blue-600 focus:ring-blue-500 border-gray-300"
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
