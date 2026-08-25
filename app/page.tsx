@@ -30,12 +30,29 @@ const BEEP_TOTAL_MS = (SECOND_TONE_OFFSET + TONE_DURATION) * 1000;
 // ★「ピッピ」が鳴り終わってから次の「ピッピ」までの間隔（ミリ秒）
 const GAP_AFTER_BEEP_MS = 1000;
 
+// ★表記ゆれ吸収のための正規化関数
+const normalizeString = (str: string) => {
+  if (!str) return "";
+  return str
+    // 全角英数字を半角に変換
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+    // ひらがなをカタカナに変換
+    .replace(/[\u3041-\u3096]/g, (match) => String.fromCharCode(match.charCodeAt(0) + 0x0060))
+    // 大文字を小文字に変換
+    .toLowerCase();
+};
+
 export default function Home() {
   const [attractions, setAttractions] = useState<any[]>([]);
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
   const [selectedShop, setSelectedShop] = useState<any | null>(null);
   const [userId, setUserId] = useState("");
   const [isBanned, setIsBanned] = useState(false);
+
+  // ★検索・絞り込み用のステート
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagSearchMode, setTagSearchMode] = useState<"AND" | "OR">("OR");
 
   // ★通知設定（デフォルトOFF）
   const [enableSound, setEnableSound] = useState(false);
@@ -458,6 +475,47 @@ export default function Home() {
     }
   };
 
+  // --- ★検索・絞り込み処理 ---
+  // 全会場からハッシュタグを収集して重複排除
+  const allTags = Array.from(new Set(attractions.flatMap(a => a.tags || [])));
+
+  // フィルタリングおよびスコアリング
+  const filteredAttractions = attractions
+    .filter(shop => {
+      // 1. ハッシュタグの絞り込み
+      if (selectedTags.length > 0) {
+        const shopTags = shop.tags || [];
+        if (tagSearchMode === "AND") {
+          if (!selectedTags.every(tag => shopTags.includes(tag))) return false;
+        } else {
+          if (!selectedTags.some(tag => shopTags.includes(tag))) return false;
+        }
+      }
+      return true;
+    })
+    .map(shop => {
+      // 2. フリーワード検索のスコアリング
+      let score = 0;
+      if (!searchQuery) {
+        score = 4; // 検索ワードがない場合はデフォルトとして一律に高いスコアを付与
+      } else {
+        const normalizedQuery = normalizeString(searchQuery);
+        const normalizedName = normalizeString(shop.name);
+        const normalizedDesc = normalizeString(shop.description || "");
+
+        if (normalizedName === normalizedQuery) {
+          score = 3; // 完全一致
+        } else if (normalizedName.includes(normalizedQuery)) {
+          score = 2; // 部分一致
+        } else if (normalizedDesc.includes(normalizedQuery)) {
+          score = 1; // 関連一致
+        }
+      }
+      return { ...shop, _searchScore: score };
+    })
+    .filter(shop => shop._searchScore > 0)
+    .sort((a, b) => b._searchScore - a._searchScore); // スコア順に降順ソート
+
   return (
     <div className="max-w-md mx-auto p-4 bg-gray-50 min-h-screen pb-20 relative">
       <header className="mb-6">
@@ -605,11 +663,64 @@ export default function Home() {
         </div>
       )}
 
+      {/* ★検索・絞り込みパネル */}
+      {!selectedShop && (
+        <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border space-y-4">
+          {/* フリーワード検索 */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">フリーワード検索</label>
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="会場名や説明文で検索"
+              className="w-full p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            />
+          </div>
+          
+          {/* ハッシュタグ絞り込み */}
+          {allTags.length > 0 && (
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="block text-sm font-bold text-gray-700">ハッシュタグ絞り込み</label>
+                {selectedTags.length > 1 && (
+                  <button 
+                    onClick={() => setTagSearchMode(prev => prev === "AND" ? "OR" : "AND")}
+                    className="text-[10px] px-2 py-1 bg-gray-100 rounded border font-bold text-gray-600 hover:bg-gray-200 transition"
+                  >
+                    {tagSearchMode === "AND" ? "AND (すべて含む)" : "OR (いずれかを含む)"}
+                  </button>
+                )}
+              </div>
+              <div className="max-h-24 overflow-y-auto border rounded-lg p-2 bg-gray-50 flex flex-wrap gap-2">
+                {allTags.map(tag => (
+                  <label key={tag} className="flex items-center gap-1 text-sm bg-white px-2 py-1 rounded border cursor-pointer hover:bg-gray-100 transition">
+                    <input 
+                      type="checkbox" 
+                      checked={selectedTags.includes(tag)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedTags(prev => [...prev, tag]);
+                        } else {
+                          setSelectedTags(prev => prev.filter(t => t !== tag));
+                        }
+                      }}
+                      className="rounded text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">#{tag}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* 店舗選択リスト */}
       {!selectedShop ? (
         <div className="space-y-3">
           <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">アトラクションを選ぶ</p>
-          {attractions.map((shop) => (
+          {filteredAttractions.map((shop) => (
             <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-3 rounded-xl shadow-sm border text-left flex items-start gap-3 hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
               {shop.imageUrl && (
                   <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
@@ -634,6 +745,9 @@ export default function Home() {
               <div className="self-center text-gray-300">&gt;</div>
             </button>
           ))}
+          {filteredAttractions.length === 0 && (
+            <p className="text-center text-gray-500 py-4 text-sm font-bold">該当するアトラクションがありません</p>
+          )}
         </div>
       ) : (
         // 詳細・予約画面
