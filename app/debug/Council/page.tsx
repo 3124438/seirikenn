@@ -14,8 +14,24 @@ const convertGoogleDriveLink = (url: string) => {
   } catch (e) { return url; }
 };
 
+// ハッシュタグ抽出関数（X/旧Twitter仕様に準拠）
+const extractTags = (text: string) => {
+  // 全角シャープを半角に、全角スペースを半角スペースに変換
+  const normalized = text.replace(/＃/g, '#').replace(/ /g, ' ');
+  // #に続き、英数字、アンダースコア、日本語（ひらがな、カタカナ、漢字など）が連続する部分を抽出
+  const regex = /#([a-zA-Z0-9_ぁ-んァ-ヶｱ-ﾝﾞﾟ一-龠]+)/g;
+  const tags: string[] = [];
+  let match;
+  while ((match = regex.exec(normalized)) !== null) {
+    if (!tags.includes(match[1])) {
+      tags.push(match[1]);
+    }
+  }
+  return tags;
+};
+
 // ─────────────────────────────────────────
-//  ★削除対象 選択モーダル（UID・会場をチェックリストで選択）
+// ★削除対象 選択モーダル（UID・会場をチェックリストで選択）
 // ─────────────────────────────────────────
 function SelectDestroyTargetsModal({
   users,
@@ -159,7 +175,7 @@ function SelectDestroyTargetsModal({
 }
 
 // ─────────────────────────────────────────
-//  全削除確認モーダル（最終確認）
+// 全削除確認モーダル（最終確認）
 // ─────────────────────────────────────────
 function DestroyModal({
   targetSummary,
@@ -234,7 +250,7 @@ function DestroyModal({
 }
 
 // ─────────────────────────────────────────
-//  メインコンポーネント
+// メインコンポーネント
 // ─────────────────────────────────────────
 export default function SuperAdminPage() {
   const [attractions, setAttractions] = useState<any[]>([]);
@@ -252,6 +268,7 @@ export default function SuperAdminPage() {
   const [department, setDepartment] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [description, setDescription] = useState("");
+  const [hashtagInput, setHashtagInput] = useState(""); // ★追加：ハッシュタグ入力用
   const [groupLimit, setGroupLimit] = useState(4);
   const [openTime, setOpenTime] = useState("10:00");
   const [closeTime, setCloseTime] = useState("15:00");
@@ -357,6 +374,7 @@ export default function SuperAdminPage() {
     setIsEditing(false); setOriginalId(null);
     setManualId(""); setNewName(""); setPassword("");
     setDepartment(""); setImageUrl(""); setDescription("");
+    setHashtagInput(""); // ★追加
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
     setReleaseBeforeTime("00:00"); setIsQueueMode(false);
@@ -366,6 +384,8 @@ export default function SuperAdminPage() {
     setIsEditing(true); setOriginalId(shop.id);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
     setDepartment(shop.department || ""); setImageUrl(shop.imageUrl || ""); setDescription(shop.description || "");
+    // ★追加：保存されているタグ配列を文字列に戻して入力欄へ
+    setHashtagInput((shop.tags || []).map((t: string) => "#" + t).join(" "));
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
     setCloseTime(shop.closeTime); setDuration(shop.duration);
     setCapacity(shop.capacity); setIsPaused(shop.isPaused || false);
@@ -411,10 +431,13 @@ export default function SuperAdminPage() {
       }
     }
 
+    // ★追加：抽出したタグの配列をデータに含める
+    const tags = extractTags(hashtagInput);
+
     const data: any = {
       name: newName, password, groupLimit, department, imageUrl, description,
       openTime, closeTime, duration, capacity, isPaused, slots,
-      isQueueMode, releaseBeforeTime,
+      isQueueMode, releaseBeforeTime, tags, // ←ここ
       reservations: isEditing ? existingReservations : [],
       queue: isEditing ? existingQueue : [],
     };
@@ -569,7 +592,7 @@ export default function SuperAdminPage() {
     : "";
 
   // ════════════════════════════════════════════════
-  //  RENDER
+  // RENDER
   // ════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-gray-900 text-white font-sans">
@@ -633,6 +656,31 @@ export default function SuperAdminPage() {
                 <label className="text-xs text-gray-400 mb-1 block">会場説明文 <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意・最大500文字</span></label>
                 <textarea className="w-full bg-gray-700 p-2 rounded text-white h-24 text-sm border border-gray-600 focus:border-blue-500 outline-none resize-none" maxLength={500} value={description} onChange={e => setDescription(e.target.value)} />
                 <div className="text-right text-xs text-gray-500">{description.length}/500</div>
+              </div>
+
+              {/* ハッシュタグ (編集用) */}
+              <div className="mb-4 bg-gray-900/30 p-3 rounded border border-gray-600">
+                <label className="text-xs font-bold text-gray-400 mb-2 block uppercase tracking-wider">ハッシュタグ <span className="text-gray-500 text-[10px] normal-case border border-gray-600 px-1 rounded ml-1">任意・最大100文字</span></label>
+                {/* プレビュー表示 */}
+                <div className="flex flex-wrap gap-2 mb-2 min-h-[24px]">
+                  {extractTags(hashtagInput).length > 0 ? (
+                    extractTags(hashtagInput).map(tag => (
+                      <span key={tag} className="bg-blue-900/60 text-blue-300 border border-blue-700 px-3 py-0.5 rounded-full text-xs font-bold">
+                        #{tag}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs text-gray-500 flex items-center">認識されたタグがここに表示されます</span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono"
+                  maxLength={100}
+                  placeholder="例: 楽しい #お化け屋敷 #3年A組"
+                  value={hashtagInput}
+                  onChange={e => setHashtagInput(e.target.value)}
+                />
               </div>
 
               {/* 運用モード */}
@@ -700,6 +748,31 @@ export default function SuperAdminPage() {
                   <label className="text-xs text-gray-400 block mb-1">会場説明文 <span className="text-gray-500 text-[10px]">任意・最大500文字</span></label>
                   <textarea className="w-full bg-gray-700 p-2 rounded text-white h-20 text-sm border border-gray-600 outline-none resize-none" maxLength={500} value={description} onChange={e => setDescription(e.target.value)} />
                   <div className="text-right text-xs text-gray-500">{description.length}/500</div>
+                </div>
+
+                {/* ハッシュタグ (新規作成用) */}
+                <div className="bg-gray-900 p-3 rounded border border-gray-600">
+                  <label className="text-xs font-bold text-gray-400 mb-2 block uppercase">ハッシュタグ <span className="text-gray-500 text-[10px] normal-case">任意・最大100文字</span></label>
+                  {/* プレビュー表示 */}
+                  <div className="flex flex-wrap gap-2 mb-2 min-h-[24px]">
+                    {extractTags(hashtagInput).length > 0 ? (
+                      extractTags(hashtagInput).map(tag => (
+                        <span key={tag} className="bg-blue-900/60 text-blue-300 border border-blue-700 px-3 py-0.5 rounded-full text-xs font-bold">
+                          #{tag}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-gray-500 flex items-center">認識されたタグがここに表示されます</span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none text-sm font-mono"
+                    maxLength={100}
+                    placeholder="例: 楽しい #お化け屋敷 #3年A組"
+                    value={hashtagInput}
+                    onChange={e => setHashtagInput(e.target.value)}
+                  />
                 </div>
 
                 {/* 運用モード (新規) */}
@@ -846,6 +919,16 @@ export default function SuperAdminPage() {
                 {/* 説明文 */}
                 {targetShop.description && (
                   <div className="bg-gray-700/50 p-4 rounded-lg border border-gray-600 text-sm text-gray-200 leading-relaxed whitespace-pre-wrap">{targetShop.description}</div>
+                )}
+                {/* ハッシュタグ（詳細表示） */}
+                {targetShop.tags && targetShop.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {targetShop.tags.map((tag: string) => (
+                      <span key={tag} className="bg-blue-900/60 text-blue-300 border border-blue-700 px-3 py-0.5 rounded-full text-xs font-bold">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
                 )}
 
                 {/* ゲスト枠ボタン */}
@@ -1032,5 +1115,3 @@ export default function SuperAdminPage() {
     </div>
   );
 }
-
-
