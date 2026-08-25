@@ -549,7 +549,7 @@ export default function Home() {
               )}
               {selectedTags.map(tag => (
                 <span key={tag} className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full border border-blue-200">
-                  #{tag}
+                  {tag}
                 </span>
               ))}
             </div>
@@ -610,7 +610,7 @@ export default function Home() {
                           onClick={() => setSelectedTags(prev => prev.filter(t => t !== tag))}
                           className="px-2 py-1 bg-blue-100 text-blue-800 text-xs font-bold rounded-full border border-blue-200 cursor-pointer hover:bg-blue-200 transition flex items-center gap-1"
                         >
-                          #{tag} <span className="text-blue-500 font-black">×</span>
+                          {tag} <span className="text-blue-500 font-black">×</span>
                         </span>
                       ))}
                     </div>
@@ -621,7 +621,7 @@ export default function Home() {
                     <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-gray-50 flex flex-col gap-2">
                       {unselectedTags.map(tag => (
                         <label key={tag} className="flex justify-between items-center text-base bg-white px-3 py-3 rounded-lg border shadow-sm cursor-pointer hover:bg-blue-50 transition">
-                          <span className="text-gray-800 font-bold">#{tag}</span>
+                          <span className="text-gray-800 font-bold">{tag}</span>
                           <input 
                             type="checkbox" 
                             checked={false}
