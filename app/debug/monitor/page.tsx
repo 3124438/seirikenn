@@ -2,11 +2,11 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import { db, auth } from "../../../firebase";
-import { collection, onSnapshot, doc } from "firebase/firestore";
+import { collection, onSnapshot } from "firebase/firestore";
 import { signInAnonymously } from "firebase/auth";
 
 // ─────────────────────────────────────────
-//  型
+// 型
 // ─────────────────────────────────────────
 type Ticket = {
   ticketId: string;
@@ -25,12 +25,12 @@ type Shop = {
 };
 
 // ─────────────────────────────────────────
-//  定数
+// 定数
 // ─────────────────────────────────────────
 const BLINK_INTERVAL = 800; // ms
 
 // ─────────────────────────────────────────
-//  会場選択画面
+// 会場選択画面
 // ─────────────────────────────────────────
 function ShopSelectScreen({
   shops,
@@ -45,7 +45,7 @@ function ShopSelectScreen({
     <div
       style={{
         minHeight: "100vh",
-        background: "#0a0a0a",
+        background: "#f5f5f5",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -65,7 +65,7 @@ function ShopSelectScreen({
           style={{
             fontSize: "0.85rem",
             letterSpacing: "0.3em",
-            color: "#555",
+            color: "#888",
             textTransform: "uppercase",
             marginBottom: "0.75rem",
           }}
@@ -76,7 +76,7 @@ function ShopSelectScreen({
           style={{
             fontSize: "2rem",
             fontWeight: 800,
-            color: "#fff",
+            color: "#111",
             margin: 0,
             letterSpacing: "0.05em",
           }}
@@ -89,9 +89,9 @@ function ShopSelectScreen({
       {queueShops.length === 0 ? (
         <div
           style={{
-            color: "#555",
+            color: "#888",
             fontSize: "1rem",
-            border: "1px dashed #333",
+            border: "1px dashed #ccc",
             borderRadius: "12px",
             padding: "2rem 3rem",
             textAlign: "center",
@@ -120,18 +120,18 @@ function ShopSelectScreen({
                 key={shop.id}
                 onClick={() => onSelect(shop)}
                 style={{
-                  background: "#111",
-                  border: "1px solid #2a2a2a",
+                  background: "#fff",
+                  border: "1px solid #e0e0e0",
                   borderRadius: "16px",
                   padding: "1.5rem",
                   cursor: "pointer",
                   textAlign: "left",
                   transition: "all 0.18s ease",
-                  color: "#fff",
+                  color: "#111",
                 }}
                 onMouseEnter={(e) => {
                   (e.currentTarget as HTMLButtonElement).style.background =
-                    "#1a1a1a";
+                    "#fafafa";
                   (e.currentTarget as HTMLButtonElement).style.borderColor =
                     "#FFD700";
                   (
@@ -140,9 +140,9 @@ function ShopSelectScreen({
                 }}
                 onMouseLeave={(e) => {
                   (e.currentTarget as HTMLButtonElement).style.background =
-                    "#111";
+                    "#fff";
                   (e.currentTarget as HTMLButtonElement).style.borderColor =
-                    "#2a2a2a";
+                    "#e0e0e0";
                   (e.currentTarget as HTMLButtonElement).style.transform =
                     "translateY(0)";
                 }}
@@ -182,7 +182,7 @@ function ShopSelectScreen({
                   <div
                     style={{
                       fontSize: "0.75rem",
-                      color: "#666",
+                      color: "#777",
                       marginBottom: "0.75rem",
                     }}
                   >
@@ -197,7 +197,7 @@ function ShopSelectScreen({
                     gap: "1rem",
                     marginTop: "0.75rem",
                     paddingTop: "0.75rem",
-                    borderTop: "1px solid #222",
+                    borderTop: "1px solid #eee",
                   }}
                 >
                   <div style={{ textAlign: "center" }}>
@@ -205,13 +205,13 @@ function ShopSelectScreen({
                       style={{
                         fontSize: "1.4rem",
                         fontWeight: 800,
-                        color: calledCount > 0 ? "#ff4d4d" : "#555",
+                        color: calledCount > 0 ? "#e53935" : "#ccc",
                         lineHeight: 1,
                       }}
                     >
                       {calledCount}
                     </div>
-                    <div style={{ fontSize: "0.65rem", color: "#555", marginTop: "2px" }}>
+                    <div style={{ fontSize: "0.65rem", color: "#888", marginTop: "2px" }}>
                       呼び出し中
                     </div>
                   </div>
@@ -220,13 +220,13 @@ function ShopSelectScreen({
                       style={{
                         fontSize: "1.4rem",
                         fontWeight: 800,
-                        color: "#aaa",
+                        color: "#666",
                         lineHeight: 1,
                       }}
                     >
                       {waitingCount}
                     </div>
-                    <div style={{ fontSize: "0.65rem", color: "#555", marginTop: "2px" }}>
+                    <div style={{ fontSize: "0.65rem", color: "#888", marginTop: "2px" }}>
                       待機中
                     </div>
                   </div>
@@ -241,7 +241,7 @@ function ShopSelectScreen({
 }
 
 // ─────────────────────────────────────────
-//  呼び出し番号表示画面 (16:9 固定)
+// 呼び出し番号表示画面 (16:9 固定)
 // ─────────────────────────────────────────
 function SignageScreen({
   shop,
@@ -302,7 +302,7 @@ function SignageScreen({
       style={{
         width: "100vw",
         height: "100vh",
-        background: "#000",
+        background: "#e5e5e5",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -321,7 +321,7 @@ function SignageScreen({
           transformOrigin: "center center",
           display: "flex",
           flexDirection: "column",
-          background: "#050505",
+          background: "#ffffff",
           position: "relative",
           overflow: "hidden",
         }}
@@ -333,7 +333,7 @@ function SignageScreen({
             inset: 0,
             width: "100%",
             height: "100%",
-            opacity: 0.04,
+            opacity: 0.05,
             pointerEvents: "none",
           }}
         >
@@ -344,7 +344,7 @@ function SignageScreen({
               y1={0}
               x2={i * 96}
               y2={1080}
-              stroke="#fff"
+              stroke="#000"
               strokeWidth={1}
             />
           ))}
@@ -355,7 +355,7 @@ function SignageScreen({
               y1={i * 90}
               x2={1920}
               y2={i * 90}
-              stroke="#fff"
+              stroke="#000"
               strokeWidth={1}
             />
           ))}
@@ -365,8 +365,8 @@ function SignageScreen({
         <div
           style={{
             height: 88,
-            background: "#0d0d0d",
-            borderBottom: "2px solid #1a1a1a",
+            background: "#fcfcfc",
+            borderBottom: "2px solid #eaeaea",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
@@ -379,9 +379,9 @@ function SignageScreen({
             onClick={onBack}
             style={{
               background: "transparent",
-              border: "1px solid #333",
+              border: "1px solid #ccc",
               borderRadius: 8,
-              color: "#555",
+              color: "#666",
               fontSize: 22,
               padding: "6px 20px",
               cursor: "pointer",
@@ -391,12 +391,12 @@ function SignageScreen({
               transition: "all 0.15s",
             }}
             onMouseEnter={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "#aaa";
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "#666";
+              (e.currentTarget as HTMLButtonElement).style.color = "#111";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "#999";
             }}
             onMouseLeave={(e) => {
-              (e.currentTarget as HTMLButtonElement).style.color = "#555";
-              (e.currentTarget as HTMLButtonElement).style.borderColor = "#333";
+              (e.currentTarget as HTMLButtonElement).style.color = "#666";
+              (e.currentTarget as HTMLButtonElement).style.borderColor = "#ccc";
             }}
           >
             ← 戻る
@@ -408,7 +408,7 @@ function SignageScreen({
               style={{
                 fontSize: 36,
                 fontWeight: 900,
-                color: "#fff",
+                color: "#111",
                 letterSpacing: "0.05em",
                 lineHeight: 1,
               }}
@@ -416,7 +416,7 @@ function SignageScreen({
               {shop.name}
             </div>
             {shop.department && (
-              <div style={{ fontSize: 18, color: "#555", marginTop: 4 }}>
+              <div style={{ fontSize: 18, color: "#777", marginTop: 4 }}>
                 {shop.department}
               </div>
             )}
@@ -451,7 +451,7 @@ function SignageScreen({
           <div
             style={{
               flex: "0 0 60%",
-              borderRight: "2px solid #1a1a1a",
+              borderRight: "2px solid #eaeaea",
               display: "flex",
               flexDirection: "column",
               padding: "48px 60px",
@@ -463,7 +463,7 @@ function SignageScreen({
               style={{
                 fontSize: 28,
                 fontWeight: 700,
-                color: "#444",
+                color: "#666",
                 letterSpacing: "0.3em",
                 textTransform: "uppercase",
                 marginBottom: 32,
@@ -485,7 +485,7 @@ function SignageScreen({
                 style={{
                   fontSize: 22,
                   fontWeight: 400,
-                  color: "#333",
+                  color: "#000",
                   letterSpacing: "0.05em",
                   marginLeft: 8,
                 }}
@@ -502,7 +502,7 @@ function SignageScreen({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: "#222",
+                  color: "#ccc",
                   fontSize: 36,
                   fontWeight: 700,
                   letterSpacing: "0.1em",
@@ -537,7 +537,7 @@ function SignageScreen({
               flexDirection: "column",
               padding: "48px 56px",
               minWidth: 0,
-              background: calledTickets.length > 0 ? "#060606" : "transparent",
+              background: calledTickets.length > 0 ? "#fff0f0" : "transparent",
               position: "relative",
             }}
           >
@@ -548,7 +548,7 @@ function SignageScreen({
                   position: "absolute",
                   inset: 0,
                   background:
-                    "radial-gradient(ellipse at 50% 30%, rgba(255,60,60,0.06) 0%, transparent 70%)",
+                    "radial-gradient(ellipse at 50% 30%, rgba(229,57,53,0.06) 0%, transparent 70%)",
                   pointerEvents: "none",
                   transition: `opacity ${BLINK_INTERVAL}ms ease`,
                   opacity: blinkOn ? 1 : 0,
@@ -567,7 +567,7 @@ function SignageScreen({
                 display: "flex",
                 alignItems: "center",
                 gap: 14,
-                color: calledTickets.length > 0 ? "#ff4d4d" : "#444",
+                color: calledTickets.length > 0 ? "#e53935" : "#bbb",
               }}
             >
               <div
@@ -578,9 +578,9 @@ function SignageScreen({
                   background:
                     calledTickets.length > 0
                       ? blinkOn
-                        ? "#ff4d4d"
-                        : "#400"
-                      : "#333",
+                        ? "#e53935"
+                        : "#ffb3b3"
+                      : "#ccc",
                   transition: `background ${BLINK_INTERVAL}ms ease`,
                 }}
               />
@@ -590,10 +590,9 @@ function SignageScreen({
                   style={{
                     fontSize: 22,
                     fontWeight: 400,
-                    color: "#ff4d4d",
+                    color: "#e53935",
                     letterSpacing: "0.05em",
                     marginLeft: 8,
-                    opacity: 0.7,
                   }}
                 >
                   {calledTickets.length}組
@@ -609,7 +608,7 @@ function SignageScreen({
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  color: "#1e1e1e",
+                  color: "#ddd",
                   fontSize: 36,
                   fontWeight: 700,
                   letterSpacing: "0.1em",
@@ -643,8 +642,8 @@ function SignageScreen({
         <div
           style={{
             height: 48,
-            background: "#0a0a0a",
-            borderTop: "1px solid #111",
+            background: "#f0f0f0",
+            borderTop: "1px solid #ddd",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -652,7 +651,7 @@ function SignageScreen({
             flexShrink: 0,
           }}
         >
-          <div style={{ fontSize: 16, color: "#2a2a2a", letterSpacing: "0.2em" }}>
+          <div style={{ fontSize: 16, color: "#999", letterSpacing: "0.2em" }}>
             QUEUE DISPLAY SYSTEM
           </div>
           <div
@@ -660,10 +659,10 @@ function SignageScreen({
               width: 4,
               height: 4,
               borderRadius: "50%",
-              background: "#1a1a1a",
+              background: "#ccc",
             }}
           />
-          <div style={{ fontSize: 16, color: "#2a2a2a", fontFamily: "monospace" }}>
+          <div style={{ fontSize: 16, color: "#999", fontFamily: "monospace" }}>
             {shop.id}
           </div>
         </div>
@@ -673,7 +672,7 @@ function SignageScreen({
 }
 
 // ─────────────────────────────────────────
-//  準備中カード
+// 準備中カード
 // ─────────────────────────────────────────
 function WaitingCard({
   ticket,
@@ -687,8 +686,8 @@ function WaitingCard({
   return (
     <div
       style={{
-        background: "#0f0f0f",
-        border: "1px solid #1c1c1c",
+        background: "#fafafa",
+        border: "1px solid #f0f0f0",
         borderRadius: 16,
         padding: "24px 28px",
         display: "flex",
@@ -703,7 +702,7 @@ function WaitingCard({
         style={{
           fontSize: 24,
           fontWeight: 900,
-          color: "#2a2a2a",
+          color: "#999",
           fontVariantNumeric: "tabular-nums",
           flexShrink: 0,
           width: 40,
@@ -718,7 +717,7 @@ function WaitingCard({
         style={{
           fontSize: 56,
           fontWeight: 900,
-          color: "#c8c8c8",
+          color: "#222",
           fontVariantNumeric: "tabular-nums",
           letterSpacing: "0.04em",
           lineHeight: 1,
@@ -737,7 +736,7 @@ function WaitingCard({
         style={{
           fontSize: 20,
           fontWeight: 700,
-          color: "#333",
+          color: "#555",
           flexShrink: 0,
           textAlign: "right",
           lineHeight: 1.2,
@@ -751,7 +750,7 @@ function WaitingCard({
 }
 
 // ─────────────────────────────────────────
-//  呼び出し中カード
+// 呼び出し中カード
 // ─────────────────────────────────────────
 function CalledCard({
   ticket,
@@ -765,8 +764,8 @@ function CalledCard({
   return (
     <div
       style={{
-        background: "#0a0000",
-        border: `2px solid ${blinkOn ? "#cc2222" : "#400"}`,
+        background: "#fff5f5",
+        border: `2px solid ${blinkOn ? "#e53935" : "#ffcdd2"}`,
         borderRadius: 20,
         padding: "36px 40px",
         display: "flex",
@@ -785,7 +784,7 @@ function CalledCard({
           fontSize: 20,
           fontWeight: 700,
           letterSpacing: "0.3em",
-          color: blinkOn ? "#cc3333" : "#660000",
+          color: blinkOn ? "#d32f2f" : "#ff9999",
           transition: `color ${BLINK_INTERVAL}ms ease`,
           textTransform: "uppercase",
         }}
@@ -800,7 +799,7 @@ function CalledCard({
           fontWeight: 900,
           lineHeight: 1,
           letterSpacing: "0.04em",
-          color: blinkOn ? "#FFD700" : "#aa8800",
+          color: blinkOn ? "#d97706" : "#fcd34d",
           transition: `color ${BLINK_INTERVAL}ms ease`,
           fontVariantNumeric: "tabular-nums",
           fontFamily: "'Noto Sans JP', 'Yu Gothic', sans-serif",
@@ -816,7 +815,7 @@ function CalledCard({
         style={{
           fontSize: 28,
           fontWeight: 700,
-          color: "#555",
+          color: "#777",
         }}
       >
         {ticket.count}名
@@ -826,7 +825,7 @@ function CalledCard({
 }
 
 // ─────────────────────────────────────────
-//  メインコンポーネント
+// メインコンポーネント
 // ─────────────────────────────────────────
 export default function SignagePage() {
   const [shops, setShops] = useState<Shop[]>([]);
