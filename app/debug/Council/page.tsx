@@ -266,7 +266,8 @@ export default function SuperAdminPage() {
   const [newName, setNewName] = useState("");
   const [password, setPassword] = useState("");
   const [department, setDepartment] = useState("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [iconUrl, setIconUrl] = useState("");
+  const [headerUrl, setHeaderUrl] = useState("");
   const [description, setDescription] = useState("");
   const [hashtagInput, setHashtagInput] = useState(""); // ★追加：ハッシュタグ入力用
   const [groupLimit, setGroupLimit] = useState(4);
@@ -373,7 +374,7 @@ export default function SuperAdminPage() {
   const resetForm = () => {
     setIsEditing(false); setOriginalId(null);
     setManualId(""); setNewName(""); setPassword("");
-    setDepartment(""); setImageUrl(""); setDescription("");
+    setDepartment(""); setIconUrl(""); setHeaderUrl(""); setDescription("");
     setHashtagInput(""); // ★追加
     setGroupLimit(4); setOpenTime("10:00"); setCloseTime("15:00");
     setDuration(20); setCapacity(3); setIsPaused(false);
@@ -383,7 +384,10 @@ export default function SuperAdminPage() {
   const startEdit = (shop: any) => {
     setIsEditing(true); setOriginalId(shop.id);
     setManualId(shop.id); setNewName(shop.name); setPassword(shop.password);
-    setDepartment(shop.department || ""); setImageUrl(shop.imageUrl || ""); setDescription(shop.description || "");
+    setDepartment(shop.department || ""); 
+    setIconUrl(shop.iconUrl || shop.imageUrl || ""); 
+    setHeaderUrl(shop.headerUrl || shop.imageUrl || ""); 
+    setDescription(shop.description || "");
     // ★追加：保存されているタグ配列を文字列に戻して入力欄へ
     setHashtagInput((shop.tags || []).map((t: string) => "#" + t).join(" "));
     setGroupLimit(shop.groupLimit || 4); setOpenTime(shop.openTime);
@@ -435,7 +439,7 @@ export default function SuperAdminPage() {
     const tags = extractTags(hashtagInput);
 
     const data: any = {
-      name: newName, password, groupLimit, department, imageUrl, description,
+      name: newName, password, groupLimit, department, iconUrl, headerUrl, description,
       openTime, closeTime, duration, capacity, isPaused, slots,
       isQueueMode, releaseBeforeTime, tags, // ←ここ
       reservations: isEditing ? existingReservations : [],
@@ -640,14 +644,18 @@ export default function SuperAdminPage() {
               </div>
 
               {/* 団体名 / 画像URL */}
-              <div className="grid gap-4 md:grid-cols-2 mb-4">
+              <div className="grid gap-4 md:grid-cols-3 mb-4">
                 <div className="flex flex-col">
                   <label className="text-xs text-gray-400 mb-1">団体名・クラス <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span></label>
                   <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="例: 3年B組" value={department} onChange={e => setDepartment(e.target.value)} />
                 </div>
                 <div className="flex flex-col">
-                  <label className="text-xs text-gray-400 mb-1">画像URL <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span></label>
-                  <input className="bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(convertGoogleDriveLink(e.target.value))} />
+                  <label className="text-xs text-gray-400 mb-1">アイコン画像 (1:1推奨) <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span></label>
+                  <input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="https://..." value={iconUrl} onChange={e => setIconUrl(convertGoogleDriveLink(e.target.value))} />
+                </div>
+                <div className="flex flex-col">
+                  <label className="text-xs text-gray-400 mb-1">ヘッダー画像 (16:9推奨) <span className="text-gray-500 text-[10px] border border-gray-600 px-1 rounded ml-1">任意</span></label>
+                  <input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 focus:border-blue-500 outline-none" placeholder="https://..." value={headerUrl} onChange={e => setHeaderUrl(convertGoogleDriveLink(e.target.value))} />
                 </div>
               </div>
 
@@ -740,9 +748,16 @@ export default function SuperAdminPage() {
                   <div><label className="text-xs text-gray-400 block mb-1">会場名</label><input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none" value={newName} onChange={e => setNewName(e.target.value)} /></div>
                   <div><label className="text-xs text-gray-400 block mb-1">Pass (5桁)</label><input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none font-mono" maxLength={5} value={password} onChange={e => setPassword(e.target.value)} /></div>
                 </div>
-                <div className="grid gap-2 md:grid-cols-2">
+                <div className="grid gap-2 md:grid-cols-3">
                   <div><label className="text-xs text-gray-400 block mb-1">団体名・クラス</label><input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none" placeholder="例: 3年B組" value={department} onChange={e => setDepartment(e.target.value)} /></div>
-                  <div><label className="text-xs text-gray-400 block mb-1">画像URL</label><input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none" placeholder="https://..." value={imageUrl} onChange={e => setImageUrl(convertGoogleDriveLink(e.target.value))} /></div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">アイコン画像 (1:1推奨)</label>
+                    <input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none" placeholder="https://..." value={iconUrl} onChange={e => setIconUrl(convertGoogleDriveLink(e.target.value))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-400 block mb-1">ヘッダー画像 (16:9推奨)</label>
+                    <input className="w-full bg-gray-700 p-2 rounded text-white border border-gray-600 outline-none" placeholder="https://..." value={headerUrl} onChange={e => setHeaderUrl(convertGoogleDriveLink(e.target.value))} />
+                  </div>
                 </div>
                 <div>
                   <label className="text-xs text-gray-400 block mb-1">会場説明文 <span className="text-gray-500 text-[10px]">任意・最大500文字</span></label>
@@ -859,8 +874,8 @@ export default function SuperAdminPage() {
                   className={`group p-4 rounded-xl border text-left flex items-start gap-4 transition hover:bg-gray-800 relative overflow-hidden
                     ${hasUser ? 'bg-pink-900/40 border-pink-500' : 'bg-gray-800 border-gray-600'}`}
                 >
-                  {shop.imageUrl
-                    ? <img src={shop.imageUrl} alt="" className="w-16 h-16 rounded object-cover bg-gray-700 flex-shrink-0" />
+                  {(shop.iconUrl || shop.imageUrl)
+                    ? <img src={shop.iconUrl || shop.imageUrl} alt="" className="w-16 h-16 rounded object-cover bg-gray-700 flex-shrink-0" />
                     : <div className="w-16 h-16 rounded bg-gray-700 flex items-center justify-center text-2xl flex-shrink-0">🎪</div>}
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -893,9 +908,9 @@ export default function SuperAdminPage() {
             <div className="bg-gray-800 rounded-xl border border-gray-600 overflow-hidden">
               {/* タイトルバー */}
               <div className="bg-gray-700 p-4 flex justify-between items-start relative overflow-hidden">
-                {targetShop.imageUrl && (
+                {(targetShop.headerUrl || targetShop.imageUrl) && (
                   <div className="absolute inset-0 z-0 opacity-20">
-                    <img src={targetShop.imageUrl} className="w-full h-full object-cover" alt="" />
+                    <img src={targetShop.headerUrl || targetShop.imageUrl} className="w-full h-full object-cover" alt="" />
                   </div>
                 )}
                 <div className="relative z-10">
@@ -1115,3 +1130,4 @@ export default function SuperAdminPage() {
     </div>
   );
 }
+
