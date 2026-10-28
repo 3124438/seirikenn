@@ -19,7 +19,21 @@ type Ticket = {
   isQueue?: boolean;
   ticketId?: string;
   peopleAhead?: number;
+  reservationId: string;
+  password?: string;
 };
+
+// ===================================================
+// 🛠 システム基本設定パラメータ（ここを変更するだけでOK）
+// ===================================================
+
+/** 1人あたりの最大予約可能枚数（例: 1 = 1人1回まで, 2 = 1人2回まで） */
+export const MAX_RESERVATIONS_PER_USER = 3;
+
+/** 枚数制限機能を有効にするかどうか（true: 有効, false: 無制限） */
+export const ENABLE_RESERVATION_LIMIT = true;
+
+// ===================================================
 
 const TONE_DURATION = 0.15;
 const SECOND_TONE_OFFSET = 0.2;
@@ -34,12 +48,23 @@ const normalizeString = (str: string) => {
     .toLowerCase();
 };
 
+const generateReservationId = (shopId: string) => {
+  const prefix = shopId.substring(0, 3);
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let suffix = "";
+  for (let i = 0; i < 7; i++) {
+    suffix += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return prefix + suffix;
+};
+
 export default function Home() {
   const [attractions, setAttractions] = useState<any[]>([]);
   const [myTickets, setMyTickets] = useState<Ticket[]>([]);
   const [selectedShop, setSelectedShop] = useState<any | null>(null);
   const [userId, setUserId] = useState("");
   const [isBanned, setIsBanned] = useState(false);
+  const [pendingUsedIds, setPendingUsedIds] = useState<string[]>([]);
 
   // ★検索・絞り込み用のステート
   const [searchQuery, setSearchQuery] = useState("");
@@ -112,6 +137,20 @@ export default function Home() {
   };
 
   useEffect(() => {
+    let pending = [];
+    try {
+      pending = JSON.parse(localStorage.getItem("bunkasai_pending_used_ids") || "[]");
+      setPendingUsedIds(pending);
+    } catch (e) {}
+
+    const cachedTickets = localStorage.getItem("bunkasai_my_tickets");
+    if (cachedTickets) {
+      try { 
+        const parsed = JSON.parse(cachedTickets);
+        setMyTickets(parsed.filter((t: Ticket) => !pending.includes(t.reservationId))); 
+      } catch(e) {}
+    }
+
     signInAnonymously(auth).catch((e) => console.error(e));
     let storedId = localStorage.getItem("bunkasai_user_id");
     if (!storedId) {
@@ -133,22 +172,25 @@ export default function Home() {
     const unsubAttractions = onSnapshot(collection(db, "attractions"), (snapshot) => {
       const shopData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setAttractions(shopData);
-
+      
+      const currentPending = JSON.parse(localStorage.getItem("bunkasai_pending_used_ids") || "[]");
       const newMyTickets: Ticket[] = [];
+
       shopData.forEach((shop: any) => {
         if (shop.reservations) {
           shop.reservations.forEach((r: any) => {
-            if (r.userId === storedId) {
+            if (r.userId === storedId && !currentPending.includes(r.reservationId) && r.status !== 'used') {
               newMyTickets.push({
                 uniqueKey: `slot_${shop.id}_${r.time}`, shopId: shop.id, shopName: shop.name, shopDepartment: shop.department,
-                time: r.time, timestamp: r.timestamp, status: r.status, count: r.count || 1, isQueue: false
+                time: r.time, timestamp: r.timestamp, status: r.status, count: r.count || 1, isQueue: false,
+                reservationId: r.reservationId, password: shop.password
               });
             }
           });
         }
         if (shop.queue) {
           shop.queue.forEach((q: any) => {
-            if (q.userId === storedId) {
+            if (q.userId === storedId && !currentPending.includes(q.reservationId)) {
               let groupsAhead = 0;
               if (q.status === 'waiting') {
                 const myNum = parseInt(q.ticketId || "999999");
@@ -156,7 +198,8 @@ export default function Home() {
               }
               newMyTickets.push({
                 uniqueKey: `queue_${shop.id}_${q.ticketId}`, shopId: shop.id, shopName: shop.name, shopDepartment: shop.department,
-                time: "順番待ち", timestamp: q.createdAt?.toMillis() || Date.now(), status: q.status, count: q.count || 1, isQueue: true, ticketId: q.ticketId, peopleAhead: groupsAhead
+                time: "順番待ち", timestamp: q.createdAt?.toMillis() || Date.now(), status: q.status, count: q.count || 1, isQueue: true, ticketId: q.ticketId, peopleAhead: groupsAhead,
+                reservationId: q.reservationId, password: shop.password
               });
             }
           });
@@ -168,10 +211,61 @@ export default function Home() {
         return b.timestamp - a.timestamp;
       });
       setMyTickets(newMyTickets);
+      localStorage.setItem("bunkasai_my_tickets", JSON.stringify(newMyTickets));
     });
 
     return () => { unsubUser(); unsubAttractions(); };
   }, []);
+
+  // ★ バックグラウンド同期処理（未同期の消費済みIDをFirebaseに反映）
+  useEffect(() => {
+    const syncPendingUsed = async () => {
+      let pending: string[] = [];
+      try { pending = JSON.parse(localStorage.getItem("bunkasai_pending_used_ids") || "[]"); } catch(e){}
+      if (pending.length === 0 || attractions.length === 0) return;
+
+      const newPending = [...pending];
+      let hasChanges = false;
+
+      for (const resId of pending) {
+        for (const shop of attractions) {
+          const targetRes = shop.reservations?.find((r: any) => r.reservationId === resId);
+          if (targetRes && targetRes.status !== 'used') {
+            try {
+              const shopRef = doc(db, "attractions", shop.id);
+              await updateDoc(shopRef, {
+                reservations: arrayRemove(targetRes)
+              });
+              await updateDoc(shopRef, {
+                reservations: arrayUnion({ ...targetRes, status: "used" })
+              });
+              const idx = newPending.indexOf(resId);
+              if (idx !== -1) { newPending.splice(idx, 1); hasChanges = true; }
+            } catch(e) {}
+          }
+
+          const targetQ = shop.queue?.find((q: any) => q.reservationId === resId);
+          if (targetQ) {
+            try {
+              const shopRef = doc(db, "attractions", shop.id);
+              await updateDoc(shopRef, {
+                queue: arrayRemove(targetQ)
+              });
+              const idx = newPending.indexOf(resId);
+              if (idx !== -1) { newPending.splice(idx, 1); hasChanges = true; }
+            } catch(e) {}
+          }
+        }
+      }
+
+      if (hasChanges) {
+        localStorage.setItem("bunkasai_pending_used_ids", JSON.stringify(newPending));
+        setPendingUsedIds(newPending);
+      }
+    };
+
+    syncPendingUsed();
+  }, [attractions]);
 
   const activeTickets = myTickets.filter(t => ["reserved", "waiting", "ready"].includes(t.status));
 
@@ -212,7 +306,7 @@ export default function Home() {
   }
 
   const handleSelectTime = (shop: any, time: string) => {
-    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (ENABLE_RESERVATION_LIMIT && activeTickets.length >= MAX_RESERVATIONS_PER_USER) return alert(`チケットは${MAX_RESERVATIONS_PER_USER}枚までです。`);
     if (activeTickets.some(t => t.shopId === shop.id && t.time === time)) return alert("既に予約済みです。");
     const limitGroups = shop.capacity || 0; 
     const current = shop.slots[time] || 0;
@@ -226,7 +320,7 @@ export default function Home() {
   };
 
   const handleJoinQueue = (shop: any) => {
-    if (activeTickets.length >= 3) return alert("チケットは3枚までです。");
+    if (ENABLE_RESERVATION_LIMIT && activeTickets.length >= MAX_RESERVATIONS_PER_USER) return alert(`チケットは${MAX_RESERVATIONS_PER_USER}枚までです。`);
     if (activeTickets.some(t => t.shopId === shop.id)) return alert("既にこの店に並んでいます。");
     if (shop.isPaused) return alert("停止中です。");
     const maxPeople = shop.groupLimit || 10;
@@ -236,105 +330,137 @@ export default function Home() {
   };
 
   const handleConfirmBooking = async () => {
- if (!selectedShop || !draftBooking || isSubmitting) return;
- if (!confirm(`${selectedShop.name}\n${draftBooking.mode === "queue" ? "並びますか？" : "予約しますか？"}\n人数: ${peopleCount}名`)) return;
+    if (!selectedShop || !draftBooking || isSubmitting) return;
+    if (!confirm(`${selectedShop.name}\n${draftBooking.mode === "queue" ? "並びますか？" : "予約しますか？"}\n人数: ${peopleCount}名`)) return;
 
- setIsSubmitting(true);
- try {
- const shopRef = doc(db, "attractions", selectedShop.id);
+    setIsSubmitting(true);
+    try {
+      const shopRef = doc(db, "attractions", selectedShop.id);
+      const newReservationId = generateReservationId(selectedShop.id);
 
- if (draftBooking.mode === "slot") {
- let isFull = false;
- await runTransaction(db, async (transaction) => {
- const shopDoc = await transaction.get(shopRef);
- if (!shopDoc.exists()) throw new Error("店舗が存在しません");
+      if (draftBooking.mode === "slot") {
+        let isFull = false;
+        
+        let attempt = 0;
+        const maxRetries = 3;
+        while (attempt < maxRetries) {
+          try {
+            await runTransaction(db, async (transaction) => {
+              const shopDoc = await transaction.get(shopRef);
+              if (!shopDoc.exists()) throw new Error("店舗が存在しません");
 
- const data = shopDoc.data();
- const currentCount = data?.slots?.[draftBooking.time] || 0;
- const limitGroups = data?.capacity || 0;
+              const data = shopDoc.data();
+              const currentCount = data?.slots?.[draftBooking.time] || 0;
+              const limitGroups = data?.capacity || 0;
 
- if (currentCount >= limitGroups) {
- isFull = true;
- return;
- }
+              if (currentCount >= limitGroups) {
+                isFull = true;
+                return;
+              }
 
- const currentReservations = data.reservations || [];
- // 自デバイスの同時間帯の過去重複予約をクリーンアップ
- const cleanedReservations = currentReservations.filter(
- (r: any) => !(r.userId === userId && r.time === draftBooking.time && r.status === "reserved")
- );
+              const currentReservations = data.reservations || [];
+              
+              const removedCount = currentReservations.filter(
+                (r: any) => r.userId === userId && r.time === draftBooking.time && r.status === "reserved"
+              ).length;
 
- const timestamp = Date.now();
- const newReservation = {
- userId,
- time: draftBooking.time,
- timestamp,
- status: "reserved",
- count: peopleCount
- };
+              const cleanedReservations = currentReservations.filter(
+                (r: any) => !(r.userId === userId && r.time === draftBooking.time && r.status === "reserved")
+              );
 
- transaction.update(shopRef, {
- [`slots.${draftBooking.time}`]: currentCount + 1,
- reservations: [...cleanedReservations, newReservation]
- });
- });
+              const timestamp = Date.now();
+              const newReservation = {
+                reservationId: newReservationId,
+                userId,
+                time: draftBooking.time,
+                timestamp,
+                status: "reserved",
+                count: peopleCount
+              };
 
- if (isFull) {
- setBookingFailed(true);
- setIsSubmitting(false);
- return;
- }
- } else {
- let assignedTicketId = "";
- await runTransaction(db, async (transaction) => {
- const shopDoc = await transaction.get(shopRef);
- if (!shopDoc.exists()) throw new Error("店舗が存在しません");
+              const updatedSlotCount = Math.max(0, currentCount - removedCount + 1);
 
- const data = shopDoc.data();
- const currentQueue = data.queue || [];
+              transaction.update(shopRef, {
+                [`slots.${draftBooking.time}`]: updatedSlotCount,
+                reservations: [...cleanedReservations, newReservation]
+              });
+            });
+            break; 
+          } catch (err: any) {
+            attempt++;
+            if (attempt >= maxRetries) throw err;
+            await new Promise(r => setTimeout(r, 1500)); 
+          }
+        }
 
- // 自デバイスの待ち状態の過去重複整理券をクリーンアップ
- const cleanedQueue = currentQueue.filter(
- (q: any) => !(q.userId === userId && q.status === "waiting")
- );
+        if (isFull) {
+          setBookingFailed(true);
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        let assignedTicketId = "";
+        
+        let attempt = 0;
+        const maxRetries = 3;
+        while (attempt < maxRetries) {
+          try {
+            await runTransaction(db, async (transaction) => {
+              const shopDoc = await transaction.get(shopRef);
+              if (!shopDoc.exists()) throw new Error("店舗が存在しません");
 
- let maxId = 0;
- currentQueue.forEach((q: any) => {
- const num = parseInt(q.ticketId || "0");
- if (num > maxId) maxId = num;
- });
+              const data = shopDoc.data();
+              const currentQueue = data.queue || [];
 
- const nextTicketId = String(maxId + 1).padStart(6, '0');
- assignedTicketId = nextTicketId;
+              const cleanedQueue = currentQueue.filter(
+                (q: any) => !(q.userId === userId && q.status === "waiting")
+              );
 
- const newQueueItem = {
- userId,
- ticketId: nextTicketId,
- count: peopleCount,
- status: "waiting",
- createdAt: Timestamp.now()
- };
+              let maxId = 0;
+              currentQueue.forEach((q: any) => {
+                const num = parseInt(q.ticketId || "0");
+                if (num > maxId) maxId = num;
+              });
 
- transaction.update(shopRef, {
- queue: [...cleanedQueue, newQueueItem]
- });
- });
+              const nextTicketId = String(maxId + 1).padStart(6, '0');
+              assignedTicketId = nextTicketId;
 
- if (assignedTicketId) {
- alert(`発券しました！\n番号: ${assignedTicketId}`);
- }
- }
+              const newQueueItem = {
+                reservationId: newReservationId,
+                userId,
+                ticketId: nextTicketId,
+                count: peopleCount,
+                status: "waiting",
+                createdAt: Timestamp.now()
+              };
 
- setDraftBooking(null);
- setSelectedShop(null);
- setBookingFailed(false);
- } catch (e) {
- console.error(e);
- alert("エラーが発生しました。もう一度お試しください。");
- } finally {
- setIsSubmitting(false);
- }
- };
+              transaction.update(shopRef, {
+                queue: [...cleanedQueue, newQueueItem]
+              });
+            });
+            break; 
+          } catch (err: any) {
+            attempt++;
+            if (attempt >= maxRetries) throw err;
+            await new Promise(r => setTimeout(r, 1500)); 
+          }
+        }
+
+        if (assignedTicketId) {
+          alert(`発券しました！\n番号: ${assignedTicketId}`);
+        }
+      }
+
+      setDraftBooking(null);
+      setSelectedShop(null);
+      setBookingFailed(false);
+    } catch (e) {
+      console.error(e);
+      alert("通信エラーが発生しました。電波の良い場所でもう一度お試しください。");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleCancel = async (ticket: Ticket) => {
     if (!confirm("キャンセルしますか？")) return;
@@ -345,10 +471,10 @@ export default function Home() {
       const shopData = shopSnap.data();
 
       if (ticket.isQueue) {
-        const targetQ = shopData.queue?.find((q: any) => q.ticketId === ticket.ticketId);
+        const targetQ = shopData.queue?.find((q: any) => q.reservationId === ticket.reservationId);
         if (targetQ) await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
       } else {
-        const targetRes = shopData.reservations?.find((r: any) => r.userId === userId && r.time === ticket.time && r.timestamp === ticket.timestamp);
+        const targetRes = shopData.reservations?.find((r: any) => r.reservationId === ticket.reservationId);
         if (targetRes) {
           await updateDoc(shopRef, { 
             [`slots.${ticket.time}`]: increment(-1),
@@ -361,40 +487,58 @@ export default function Home() {
   };
 
   const processEntry = async (ticket: Ticket, inputPass: string) => {
-    const shop = attractions.find(s => s.id === ticket.shopId);
-    if (!shop) return;
-    
-    if (inputPass !== shop.password) {
+    if (inputPass !== ticket.password) {
       alert("パスワードが違います（QRコードが異なる可能性があります）");
       return;
     }
 
+    let currentPending: string[] = [];
+    try { currentPending = JSON.parse(localStorage.getItem("bunkasai_pending_used_ids") || "[]"); } catch(e){}
+    
+    if (currentPending.includes(ticket.reservationId)) {
+       alert("既に入場済みです");
+       setQrTicket(null);
+       return;
+    }
+
+    const newPending = [...currentPending, ticket.reservationId];
+    localStorage.setItem("bunkasai_pending_used_ids", JSON.stringify(newPending));
+    setPendingUsedIds(newPending);
+
+    const updatedTickets = myTickets.filter(t => t.reservationId !== ticket.reservationId);
+    setMyTickets(updatedTickets);
+    localStorage.setItem("bunkasai_my_tickets", JSON.stringify(updatedTickets));
+
+    alert(`「${ticket.shopName}」に入場しました！`);
+    setQrTicket(null); 
+
     try {
-      const shopRef = doc(db, "attractions", shop.id);
+      const shopRef = doc(db, "attractions", ticket.shopId);
       if (ticket.isQueue) {
-        const targetQ = shop.queue.find((q: any) => q.ticketId === ticket.ticketId);
+        const shop = attractions.find(s => s.id === ticket.shopId);
+        const targetQ = shop?.queue?.find((q: any) => q.reservationId === ticket.reservationId);
         if(targetQ) await updateDoc(shopRef, { queue: arrayRemove(targetQ) });
       } else {
-        const oldRes = shop.reservations.find((r: any) => r.userId === userId && r.time === ticket.time && r.status === "reserved");
+        const shop = attractions.find(s => s.id === ticket.shopId);
+        const oldRes = shop?.reservations?.find((r: any) => r.reservationId === ticket.reservationId);
         if(oldRes) {
           await updateDoc(shopRef, { reservations: arrayRemove(oldRes) });
           await updateDoc(shopRef, { reservations: arrayUnion({ ...oldRes, status: "used" }) });
         }
       }
-      alert(`「${shop.name}」に入場しました！`);
-      setQrTicket(null); 
+      
+      let latestPending: string[] = JSON.parse(localStorage.getItem("bunkasai_pending_used_ids") || "[]");
+      latestPending = latestPending.filter(id => id !== ticket.reservationId);
+      localStorage.setItem("bunkasai_pending_used_ids", JSON.stringify(latestPending));
+      setPendingUsedIds(latestPending);
     } catch(e) {
-      console.error(e);
-      alert("エラーが発生しました。");
+      console.error("Firebase update failed, queued for background sync", e);
     }
   };
 
   const handleManualEnter = (ticket: Ticket) => {
-    const shop = attractions.find(s => s.id === ticket.shopId);
-    if (!shop) return;
     if (ticket.isQueue && ticket.status !== 'ready') return alert("まだ呼び出しされていません。");
-
-    const inputPass = prompt(`${shop.name}のスタッフパスワードを入力：`);
+    const inputPass = prompt(`${ticket.shopName}のスタッフパスワードを入力：`);
     if (inputPass === null) return;
     processEntry(ticket, inputPass);
   };
@@ -407,8 +551,6 @@ export default function Home() {
   };
 
   const allTags = Array.from(new Set(attractions.flatMap(a => a.tags || [])));
-  
-  // ★リストには未選択のタグのみを表示し、選択したものは上のピルに移動させる
   const unselectedTags = allTags.filter(tag => !selectedTags.includes(tag));
 
   const filteredAttractions = attractions
@@ -449,8 +591,8 @@ export default function Home() {
             <h1 className="text-xl font-bold text-blue-900">予約・整理券</h1>
           </div>
           <div className="flex items-center gap-2">
-            <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= 3 ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
-              {activeTickets.length}/3枚
+            <div className={`px-3 py-1 rounded-full text-sm font-bold ${activeTickets.length >= MAX_RESERVATIONS_PER_USER && ENABLE_RESERVATION_LIMIT ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'}`}>
+              {ENABLE_RESERVATION_LIMIT ? `activeTickets.length/{MAX_RESERVATIONS_PER_USER}枚` : `${activeTickets.length}枚`}
             </div>
           </div>
         </div>
@@ -581,7 +723,6 @@ export default function Home() {
       {/* ★刷新された検索・絞り込みパネル */}
       {!selectedShop && (
         <div className="mb-6 bg-white p-4 rounded-xl shadow-sm border">
-          {/* 展開トグル */}
           <div 
             className="flex justify-between items-center cursor-pointer"
             onClick={() => setIsSearchExpanded(!isSearchExpanded)}
@@ -594,7 +735,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 閉じている時の選択中タグ・検索ワード表示 */}
           {!isSearchExpanded && (selectedTags.length > 0 || searchQuery) && (
             <div className="mt-3 flex flex-wrap gap-1">
               {searchQuery && (
@@ -610,10 +750,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* 展開時の内容 */}
           {isSearchExpanded && (
             <div className="space-y-4 pt-4 mt-3 border-t">
-              {/* フリーワード検索 */}
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-1">フリーワード検索</label>
                 <input 
@@ -625,7 +763,6 @@ export default function Home() {
                 />
               </div>
               
-              {/* ハッシュタグ絞り込み */}
               {allTags.length > 0 && (
                 <div>
                   <div className="flex justify-between items-center mb-2">
@@ -656,7 +793,6 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* ★展開中の選択中タグ表示（タップで解除可能に） */}
                   {selectedTags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mb-3">
                       {selectedTags.map(tag => (
@@ -671,7 +807,6 @@ export default function Home() {
                     </div>
                   )}
 
-                  {/* ★1行に1つ、右端にチェックボックスのリスト（未選択のみ表示） */}
                   {unselectedTags.length > 0 && (
                     <div className="max-h-60 overflow-y-auto border rounded-lg p-2 bg-gray-50 flex flex-col gap-2">
                       {unselectedTags.map(tag => (
@@ -699,57 +834,65 @@ export default function Home() {
       {!selectedShop ? (
         <div className="space-y-3">
           <p className="text-sm font-bold text-gray-600 mb-2 border-b pb-2">アトラクションを選ぶ</p>
-          {filteredAttractions.map((shop) => (
-            <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-3 rounded-xl shadow-sm border text-left flex items-start gap-3 hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
-              {shop.imageUrl && (
-                <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
-                  <img src={shop.imageUrl} alt="" className="w-full h-full object-cover" />
-                </div>
-              )}
-              <div className="flex-1 min-w-0">
-                <div className="flex flex-wrap items-center gap-1 mb-1">
-                  {shop.isQueueMode && <span className="bg-orange-100 text-orange-700 border-orange-200 border text-[10px] px-2 py-0.5 rounded font-bold">順番待ち制</span>}
-                  {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
-                </div>
-                {shop.department && (
-                  <p className="text-xs text-blue-600 font-bold mb-0.5">{shop.department}</p>
-                )}
-                <h3 className="font-bold text-lg leading-tight truncate text-gray-800 mb-1">{shop.name}</h3>
-                <div className="text-xs text-gray-400">
-                  {shop.isQueueMode 
-                    ? `待ち: ${shop.queue?.filter((q:any)=>q.status==='waiting').length || 0}組` 
-                    : `予約可`}
-                </div>
-              </div>
-              <div className="self-center text-gray-300">&gt;</div>
-            </button>
-          ))}
-          {filteredAttractions.length === 0 && (
+          
+          {attractions.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-xl shadow-sm border">
+               <p className="text-red-500 font-bold mb-2">通信エラーまたは読み込み中</p>
+               <p className="text-xs text-gray-500">電波の良い場所で再読み込みしてください</p>
+            </div>
+          ) : filteredAttractions.length === 0 ? (
             <p className="text-center text-gray-500 py-4 text-sm font-bold">該当するアトラクションがありません</p>
+          ) : (
+            filteredAttractions.map((shop) => (
+              <button key={shop.id} onClick={() => setSelectedShop(shop)} className={`w-full bg-white p-3 rounded-xl shadow-sm border text-left flex items-start gap-3 hover:bg-gray-50 transition ${shop.isPaused ? 'opacity-60 grayscale' : ''}`}>
+                {(shop.iconUrl || shop.imageUrl) && (
+                  <div className="w-20 h-20 bg-gray-200 rounded-lg overflow-hidden flex-shrink-0">
+                    <img src={shop.iconUrl || shop.imageUrl} alt="" className="w-full h-full object-cover" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-1 mb-1">
+                    {shop.isQueueMode && <span className="bg-orange-100 text-orange-700 border-orange-200 border text-[10px] px-2 py-0.5 rounded font-bold">順番待ち制</span>}
+                    {shop.isPaused && <span className="bg-red-500 text-white text-[10px] px-2 py-0.5 rounded">受付停止中</span>}
+                  </div>
+                  {shop.department && (
+                    <p className="text-xs text-blue-600 font-bold mb-0.5">{shop.department}</p>
+                  )}
+                  <h3 className="font-bold text-lg leading-tight truncate text-gray-800 mb-1">{shop.name}</h3>
+                  <div className="text-xs text-gray-400">
+                    {shop.isQueueMode 
+                      ? `待ち: ${shop.queue?.filter((q:any)=>q.status==='waiting').length || 0}組` 
+                      : `予約可`}
+                  </div>
+                </div>
+                <div className="self-center text-gray-300">&gt;</div>
+              </button>
+            ))
           )}
         </div>
       ) : (
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden pb-10">
           <div className="relative">
-            <div className="bg-gray-900 text-white text-center py-2 text-lg font-mono tracking-widest flex items-center justify-center gap-2">
-              <span className="text-sm text-gray-300">現在時刻</span>
-              {currentTime.toLocaleTimeString('ja-JP', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            <div className="bg-gray-900 text-white py-2 px-3 flex items-center justify-between">
+              <button 
+                onClick={() => { setSelectedShop(null); setDraftBooking(null); setBookingFailed(false); }} 
+                className="flex items-center gap-1 bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-full text-sm font-bold transition"
+              >
+                ← 戻る
+              </button>
+              <div className="flex items-center gap-2 font-mono tracking-widest text-sm">
+                <span className="text-xs text-gray-300">現在時刻</span>
+                {currentTime.toLocaleTimeString('ja-JP', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </div>
             </div>
 
-            {selectedShop.imageUrl && (
-              <div className="w-full h-56 bg-gray-200">
-                <img src={selectedShop.imageUrl} alt={selectedShop.name} className="w-full h-full object-cover" />
+            {(selectedShop.headerUrl || selectedShop.imageUrl) && (
+              <div className="w-full aspect-video bg-gray-200">
+                <img src={selectedShop.headerUrl || selectedShop.imageUrl} alt={selectedShop.name} className="w-full h-full object-cover" />
               </div>
             )}
 
-            <button 
-              onClick={() => { setSelectedShop(null); setDraftBooking(null); setBookingFailed(false); }} 
-              className={`absolute ${selectedShop.imageUrl ? "top-14" : "top-3"} left-3 bg-black/50 text-white px-4 py-2 rounded-full text-sm backdrop-blur-md z-10 hover:bg-black/70 transition`}
-            >
-              ← 戻る
-            </button>
-
-            <div className={`p-5 border-b bg-gray-50 ${!selectedShop.imageUrl ? "pt-16" : ""}`}>
+            <div className="p-5 border-b bg-gray-50">
               {selectedShop.department && (
                 <p className="text-sm font-bold text-blue-600 mb-1">{selectedShop.department}</p>
               )}
@@ -759,7 +902,7 @@ export default function Home() {
 
           <div className="p-4">
             {selectedShop.description && (
-              <div className="mb-6 text-sm text-gray-700 leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100">
+              <div className="mb-6 text-sm text-gray-700 leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100 whitespace-pre-wrap">
                 {selectedShop.description}
               </div>
             )}
@@ -792,6 +935,11 @@ export default function Home() {
                 ) : (
                   <div className="grid grid-cols-3 gap-3">
                     {Object.entries(selectedShop.slots || {}).sort().map(([time, count]: any) => {
+                      const [slotHour, slotMinute] = time.split(':').map(Number);
+                      const slotDate = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate(), slotHour, slotMinute, 0, 0);
+                      
+                      if (currentTime > slotDate) return null; 
+
                       const limitGroups = selectedShop.capacity || 0; 
                       const isFull = count >= limitGroups;
                       const remaining = limitGroups - count;
@@ -801,14 +949,12 @@ export default function Home() {
                       let releaseTimeStr = "";
 
                       if (selectedShop.releaseBeforeTime && selectedShop.releaseBeforeTime !== "00:00") {
-                        const [slotHour, slotMinute] = time.split(':').map(Number);
-                        const slotDate = new Date(currentTime.getFullYear(), currentTime.getMonth(), currentTime.getDate(), slotHour, slotMinute, 0, 0);
                         const [offsetHour, offsetMinute] = selectedShop.releaseBeforeTime.split(':').map(Number);
                         const releaseDate = new Date(slotDate.getTime() - (offsetHour * 60 + offsetMinute) * 60000);
 
                         if (currentTime < releaseDate) {
                           isLocked = true;
-                          releaseTimeStr = `${String(releaseDate.getHours()).padStart(2,'0')}:${String(releaseDate.getMinutes()).padStart(2, '0')} 解放`;
+                          releaseTimeStr = `String(releaseDate.getHours()).padStart(2,'0'):{String(releaseDate.getMinutes()).padStart(2, '0')} 解放`;
                         }
                       }
 
@@ -879,13 +1025,21 @@ export default function Home() {
                   やめる
                 </button>
                 {!bookingFailed && (
-                  <button  
-                   onClick={handleConfirmBooking} 
-                   disabled={isSubmitting}
-                   className={`flex-1 py-3 text-white font-bold rounded-lg shadow ${draftBooking.mode === "queue" ? "bg-orange-500" : "bg-blue-600"} ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}`}
-                   >
-                   {isSubmitting ? "処理中..." : (draftBooking.mode === "queue" ? "発券する" : "予約する")}
-                   </button>
+                  <button 
+                    onClick={handleConfirmBooking} 
+                    disabled={isSubmitting}
+                    className={`flex-1 py-3 text-white font-bold rounded-lg shadow ${draftBooking.mode === "queue" ? "bg-orange-500" : "bg-blue-600"} flex justify-center items-center ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    {isSubmitting ? (
+                      <span className="flex items-center gap-2">
+                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        通信中...
+                      </span>
+                    ) : (draftBooking.mode === "queue" ? "発券する" : "予約する")}
+                  </button>
                 )}
               </div>
             </div>
@@ -929,4 +1083,6 @@ export default function Home() {
     </div>
   );
 }
+
+
 
