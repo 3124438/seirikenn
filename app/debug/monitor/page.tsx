@@ -446,11 +446,11 @@ function SignageScreen({
           }}
         >
           {/* ════════════════════════════════
-              左エリア: 準備中 (60%)
+              左エリア: 準備中 (80%)
           ════════════════════════════════ */}
           <div
             style={{
-              flex: "0 0 60%",
+              flex: "0 0 80%",
               borderRight: "2px solid #eaeaea",
               display: "flex",
               flexDirection: "column",
@@ -461,7 +461,7 @@ function SignageScreen({
             {/* セクションラベル */}
             <div
               style={{
-                fontSize: 28,
+                fontSize: 42, // 1.5倍 (28 -> 42)
                 fontWeight: 700,
                 color: "#666",
                 letterSpacing: "0.3em",
@@ -474,8 +474,8 @@ function SignageScreen({
             >
               <div
                 style={{
-                  width: 10,
-                  height: 10,
+                  width: 15, // 文字サイズに合わせて少し大きく
+                  height: 15,
                   borderRadius: "50%",
                   background: "#2a7de1",
                 }}
@@ -483,7 +483,7 @@ function SignageScreen({
               準備中
               <span
                 style={{
-                  fontSize: 22,
+                  fontSize: 33, // 1.5倍 (22 -> 33)
                   fontWeight: 400,
                   color: "#000",
                   letterSpacing: "0.05em",
@@ -494,7 +494,7 @@ function SignageScreen({
               </span>
             </div>
 
-            {/* グリッド (2列) */}
+            {/* グリッド (3列に変更) */}
             {waitingTickets.length === 0 ? (
               <div
                 style={{
@@ -514,8 +514,8 @@ function SignageScreen({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "20px 24px",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: "20px",
                   alignContent: "start",
                   overflow: "hidden",
                 }}
@@ -528,14 +528,14 @@ function SignageScreen({
           </div>
 
           {/* ════════════════════════════════
-              右エリア: 呼び出し中 (40%)
+              右エリア: 呼び出し中 (20%)
           ════════════════════════════════ */}
           <div
             style={{
-              flex: "0 0 40%",
+              flex: "0 0 20%",
               display: "flex",
               flexDirection: "column",
-              padding: "48px 56px",
+              padding: "48px 24px",
               minWidth: 0,
               background: calledTickets.length > 0 ? "#fff0f0" : "transparent",
               position: "relative",
@@ -559,14 +559,14 @@ function SignageScreen({
             {/* セクションラベル */}
             <div
               style={{
-                fontSize: 28,
+                fontSize: 24, // 20%幅に合わせて少し縮小
                 fontWeight: 700,
-                letterSpacing: "0.3em",
+                letterSpacing: "0.2em",
                 textTransform: "uppercase",
                 marginBottom: 40,
                 display: "flex",
                 alignItems: "center",
-                gap: 14,
+                gap: 10,
                 color: calledTickets.length > 0 ? "#e53935" : "#bbb",
               }}
             >
@@ -582,17 +582,18 @@ function SignageScreen({
                         : "#ffb3b3"
                       : "#ccc",
                   transition: `background ${BLINK_INTERVAL}ms ease`,
+                  flexShrink: 0,
                 }}
               />
               呼び出し中
               {calledTickets.length > 0 && (
                 <span
                   style={{
-                    fontSize: 22,
+                    fontSize: 20,
                     fontWeight: 400,
                     color: "#e53935",
                     letterSpacing: "0.05em",
-                    marginLeft: 8,
+                    marginLeft: 4,
                   }}
                 >
                   {calledTickets.length}組
@@ -609,7 +610,7 @@ function SignageScreen({
                   alignItems: "center",
                   justifyContent: "center",
                   color: "#ddd",
-                  fontSize: 36,
+                  fontSize: 24, // 縮小
                   fontWeight: 700,
                   letterSpacing: "0.1em",
                 }}
@@ -621,7 +622,7 @@ function SignageScreen({
                 style={{
                   display: "flex",
                   flexDirection: "column",
-                  gap: 28,
+                  gap: 20,
                   overflow: "hidden",
                 }}
               >
@@ -689,7 +690,7 @@ function WaitingCard({
         background: "#fafafa",
         border: "1px solid #f0f0f0",
         borderRadius: 16,
-        padding: "24px 28px",
+        padding: "20px 24px", // 3列にするため余白を削減
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
@@ -700,12 +701,12 @@ function WaitingCard({
       {/* 順番 */}
       <div
         style={{
-          fontSize: 24,
+          fontSize: 20, // 縮小
           fontWeight: 900,
           color: "#999",
           fontVariantNumeric: "tabular-nums",
           flexShrink: 0,
-          width: 40,
+          width: 32, // 縮小
           textAlign: "center",
         }}
       >
@@ -715,7 +716,7 @@ function WaitingCard({
       {/* ID */}
       <div
         style={{
-          fontSize: 56,
+          fontSize: 44, // 3列に収まるように縮小
           fontWeight: 900,
           color: "#222",
           fontVariantNumeric: "tabular-nums",
@@ -734,7 +735,7 @@ function WaitingCard({
       {/* 人数 */}
       <div
         style={{
-          fontSize: 20,
+          fontSize: 18, // 縮小
           fontWeight: 700,
           color: "#555",
           flexShrink: 0,
@@ -743,7 +744,7 @@ function WaitingCard({
         }}
       >
         {ticket.count}
-        <span style={{ fontSize: 14, display: "block" }}>名</span>
+        <span style={{ fontSize: 12, display: "block" }}>名</span>
       </div>
     </div>
   );
@@ -767,7 +768,7 @@ function CalledCard({
         background: "#fff5f5",
         border: `2px solid ${blinkOn ? "#e53935" : "#ffcdd2"}`,
         borderRadius: 20,
-        padding: "36px 40px",
+        padding: "28px 24px", // 20%幅に合わせて余白を削減
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -781,12 +782,13 @@ function CalledCard({
       {/* 上部ラベル */}
       <div
         style={{
-          fontSize: 20,
+          fontSize: 15, // 縮小
           fontWeight: 700,
-          letterSpacing: "0.3em",
+          letterSpacing: "0.2em",
           color: blinkOn ? "#d32f2f" : "#ff9999",
           transition: `color ${BLINK_INTERVAL}ms ease`,
           textTransform: "uppercase",
+          textAlign: "center",
         }}
       >
         ▶ お越しください
@@ -795,7 +797,7 @@ function CalledCard({
       {/* 大ID */}
       <div
         style={{
-          fontSize: 72,
+          fontSize: 52, // 20%幅に収まるように縮小
           fontWeight: 900,
           lineHeight: 1,
           letterSpacing: "0.04em",
@@ -813,7 +815,7 @@ function CalledCard({
       {/* 人数 */}
       <div
         style={{
-          fontSize: 28,
+          fontSize: 24, // 縮小
           fontWeight: 700,
           color: "#777",
         }}
@@ -860,3 +862,5 @@ export default function SignagePage() {
 
   return <ShopSelectScreen shops={shops} onSelect={setSelectedShop} />;
 }
+
+
